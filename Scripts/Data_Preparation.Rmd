@@ -1,0 +1,609 @@
+---
+title: "Data preparation"
+author: "Mikaella Kontopoulou"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    number_sections: true
+    code_folding: show 
+    css: "styles.css"
+---
+
+# Load Packages
+```{r load-packages}
+suppressMessages(suppressWarnings(library(Gviz)))
+suppressMessages(suppressWarnings(library(grid)))
+suppressMessages(suppressWarnings(library(dplyr)))
+suppressMessages(suppressWarnings(library(readr)))
+suppressMessages(suppressWarnings(library(tidyr)))
+suppressMessages(suppressWarnings(library(readxl)))
+suppressMessages(suppressWarnings(library(ggplot2)))
+suppressMessages(suppressWarnings(library(stringr)))
+suppressMessages(suppressWarnings(library(ggthemr)))
+suppressMessages(suppressWarnings(library(IRanges)))
+suppressMessages(suppressWarnings(library(forcats)))
+suppressMessages(suppressWarnings(library(RMariaDB)))
+suppressMessages(suppressWarnings(library(patchwork)))
+suppressMessages(suppressWarnings(library(tidyverse)))
+suppressMessages(suppressWarnings(library(extrafont)))
+suppressMessages(suppressWarnings(library(BiocManager)))
+suppressMessages(suppressWarnings(library(GenomicRanges)))
+suppressMessages(suppressWarnings(library(GenomicFeatures)))
+suppressMessages(suppressWarnings(library(VariantAnnotation)))
+```
+
+# Load data
+```{r load-data}
+E11v4 <- readVcf("gnomad.exomes.v4.1.sites.chr11.b-locus.vcf")
+G11v4 <- readVcf("gnomad.genomes.v4.1.sites.chr11.b-locus.vcf")
+J11v4 <- readVcf("gnomad.joint.v4.1.sites.chr11.b-locus.vcf")
+
+E11v2 <- readVcf("gnomad.exomes.r2.1.1.sites.11.liftover_grch38.b-locus.vcf")
+G11v2 <- readVcf("gnomad.genomes.r2.1.1.sites.11.liftover_grch38.b-locus.vcf")
+
+E16v4 <- readVcf("gnomad.exomes.v4.1.sites.chr16.a-locus.vcf")
+G16v4 <- readVcf("gnomad.genomes.v4.1.sites.chr16.a-locus.vcf")
+J16v4 <- readVcf("gnomad.joint.v4.1.sites.chr16.a-locus.vcf")
+
+E16v2 <- readVcf("gnomad.exomes.r2.1.1.sites.16.liftover_grch38.a-locus.vcf")
+G16v2 <- readVcf("gnomad.genomes.r2.1.1.sites.16.liftover_grch38.a-locus.vcf")
+```
+
+# Variables of interest
+```{r variables}
+var_colnames <- c(# Positional
+                  "group", "start", "end", "chr", "id",                                                                             
+                  
+                  # Quality
+                  "REF_Start", "REF_End", "REF_Width", "REF", "ALT", "FILTER",                                                       
+                  
+                  # VEP
+                  "STRAND", "SYMBOL", "Gene", "Allele", "Codons", "Amino_acids", 
+                  "HGVSc", "Consequence", "VARIANT_CLASS", "BIOTYPE", "IMPACT", 
+                  "HIGH_INF_POS", "CANONICAL", " MANE_PLUS_CLINICAL", "MANE_SELECT", 
+                  "LoF", "LoF_filter", "LoF_flags", "LoF_info",
+                  
+                  # General Data
+                  "allele_type", "variant_type", "inbreeding_coeff", "InbreedingCoeff",
+                  "n_alt_alleles", "popmax", "grpmax", "DP", "QD", "VarDP", 
+                  
+                  # Allele count
+                  "AC", "AC_popmax", "AC_grpmax", "AC_ami", "AC_mid", "AC_afr", 
+                  "AC_amr", "AC_asj", "AC_fin", "AC_sas", "AC_eas", "AC_nfe", 
+                  "AC_oth", "AC_remaining",
+                   
+                  # Allele frequencies
+                  "AF", "AF_popmax", "AF_grpmax", "AF_ami", "AF_mid", "AF_afr", 
+                  "AF_amr", "AF_asj", "AF_fin", "AF_sas", "AF_eas", "AF_nfe", 
+                  "AF_oth", "AF_remaining",
+                   
+                  # Total alleles
+                  "AN", "AN_popmax", "AN_grpmax", "AN_ami", "AN_mid", "AN_afr", 
+                  "AN_amr", "AN_asj", "AN_fin", "AN_sas", "AN_eas", "AN_nfe",
+                  "AN_oth", "AN_remaining", 
+                   
+                  # Homozygote count
+                  "nhomalt", "nhomalt_popmax", "nhomalt_grpmax",      
+                  "nhomalt_ami", "nhomalt_mid", "nhomalt_afr", "nhomalt_amr", 
+                  "nhomalt_asj", "nhomalt_fin", "nhomalt_sas", "nhomalt_eas", 
+                  "nhomalt_nfe", "nhomalt_oth", "nhomalt_remaining", 
+                  
+                  # Filtering allele frequency 95% CI
+                  "faf95", "fafmax_faf95_max", "fafmax_faf95_max_gen_anc",                                   
+                  "faf95_afr", "faf95_amr", "faf95_eas", "faf95_nfe", "faf95_sas", 
+                  
+                  # Filtering allele frequency 99% CI
+                  "faf99", "fafmax_faf99_max", "fafmax_faf99_max_gen_anc",                                   
+                  "faf99_afr", "faf99_amr", "faf99_eas", "faf99_nfe", "faf99_sas")
+```
+
+# Data processing
+```{r process}
+Data <- c("E11v4", "G11v4", "E11v2", "G11v2", "E16v4", "G16v4", "E16v2", "G16v2", "J11v4", "J16v4")
+
+for(x in Data){Dat <- get(x)
+               
+               ID <- data.frame(start = start(Dat@rowRanges),
+                                end = end(Dat@rowRanges),
+                                chr = seqnames(Dat@rowRanges),
+                                id = names(Dat@rowRanges),
+                                group = 1:Dat@rowRanges@elementMetadata@nrows)
+               
+               FILTER <- as.data.frame(Dat@fixed@listData$REF@ranges) %>%
+                         mutate("REF_Start" = start,
+                                "REF_End" = end,
+                                "REF_Width" = width,
+                                "REF" = as.character(Dat@fixed@listData$REF),
+                                "ALT" = as.character(Dat@fixed@listData$ALT@unlistData),
+                                "FILTER" = Dat@fixed@listData$FILTER,
+                                "group" = 1:nrow(Dat@fixed)) %>%
+                         dplyr::select(-start, -end, -width)
+               
+               if (!(x %in% c("J11v4", "J16v4"))) {
+                 
+               VEP <- as.data.frame(Dat@info$vep) %>% 
+                      mutate(vep = value) %>% 
+                      dplyr::select(group, vep) %>% 
+                      separate(vep, 
+                               into = paste0("vep_part", 1:nrow(as_tibble(Dat@metadata$header@header@listData$INFO@listData$Description))), 
+                               sep = "\\|", fill = "right")
+               
+               if (endsWith(x, "v2")) {colnames(VEP) <- c("group", "Allele", "Consequence", "IMPACT", "SYMBOL", "Gene",
+                                                          "Feature_type", "Feature", "BIOTYPE", "EXON", "INTRON", "HGVSc",
+                                                          "HGVSp", "cDNA_position", "CDS_position", "Protein_position",
+                                                          "Amino_acids", "Codons", "Existing_variation", "ALLELE_NUM", 
+                                                          "DISTANCE", "STRAND", "FLAGS", "VARIANT_CLASS", "MINIMISED", 
+                                                          "SYMBOL_SOURCE", "HGNC_ID", "CANONICAL", "TSL", "APPRIS", "CCDS",
+                                                          "ENSP", "SWISSPROT", "TREMBL", "UNIPARC", "GENE_PHENO", "SIFT",
+                                                          "PolyPhen", "DOMAINS", "HGVS_OFFSET", "GMAF", "AFR_MAF", "AMR_MAF",
+                                                          "EAS_MAF", "EUR_MAF", "SAS_MAF", "AA_MAF", "EA_MAF", "ExAC_MAF", 
+                                                          "ExAC_Adj_MAF", "ExAC_AFR_MAF", "ExAC_AMR_MAF", "ExAC_EAS_MAF", 
+                                                          "ExAC_FIN_MAF", "ExAC_NFE_MAF", "ExAC_OTH_MAF", "ExAC_SAS_MAF", 
+                                                          "CLIN_SIG", "SOMATIC", "PHENO", "PUBMED", "MOTIF_NAME", "MOTIF_POS",
+                                                          "HIGH_INF_POS", "MOTIF_SCORE_CHANGE", "LoF", "LoF_filter", "LoF_flags", "LoF_info")}
+               
+               if (endsWith(x, "v4")) {colnames(VEP) <- c("group", "Allele", "Consequence", "IMPACT", "SYMBOL", "Gene", "Feature_type", 
+                                                          "Feature", "BIOTYPE", "EXON", "INTRON", "HGVSc", "HGVSp", "cDNA_position", 
+                                                          "CDS_position", "Protein_position", "Amino_acids", "Codons", "ALLELE_NUM", 
+                                                          "DISTANCE", "STRAND", "FLAGS", "VARIANT_CLASS", "SYMBOL_SOURCE", "HGNC_ID",
+                                                          "CANONICAL", "MANE_SELECT", "MANE_PLUS_CLINICAL", "TSL", "APPRIS", "CCDS", 
+                                                          "ENSP", "UNIPROT_ISOFORM", "SOURCE", "DOMAINS", "miRNA", "HGVS_OFFSET", "PUBMED",
+                                                          "MOTIF_NAME", "MOTIF_POS", "HIGH_INF_POS", "MOTIF_SCORE_CHANGE", 
+                                                          "TRANSCRIPTION_FACTORS", "LoF", "LoF_filter", "LoF_flags", "LoF_info")}
+               
+              DAT <- as.data.frame(Dat@info) %>% 
+                     mutate(group = 1:nrow(Dat@info)) %>%
+                     dplyr::select(-vep)
+               
+              DAT <- merge(merge(merge(ID, FILTER, by = "group"), DAT, by = "group"), VEP, by = "group")
+              
+              DAT <- DAT[, intersect(var_colnames, colnames(DAT))]}
+               
+              if (x %in% c("J11v4", "J16v4")) {
+              
+              DAT <- as.data.frame(Dat@info) %>% 
+                     mutate(group = 1:nrow(Dat@info)) 
+              
+              DAT <- merge(merge(ID, FILTER, by = "group"), DAT, by = "group")
+              
+              DAT <- DAT[, intersect(c("group", "start", "end", "chr", "id",
+                                       
+                                       "REF_Start", "REF_End", "REF_Width", "REF", "ALT", "FILTER",
+                                       
+                                       "AC_joint", "AC_joint_afr", "AC_joint_ami", "AC_joint_amr", "AC_joint_asj", "AC_joint_sas",
+                                       "AC_joint_eas", "AC_joint_fin", "AC_joint_mid", "AC_joint_nfe", "AC_joint_remaining",
+                                       
+                                       "AN_joint", "AN_joint_afr", "AN_joint_ami", "AN_joint_amr", "AN_joint_asj", "AN_joint_sas",
+                                       "AN_joint_eas", "AN_joint_fin", "AN_joint_mid", "AN_joint_nfe", "AN_joint_remaining",
+                                       
+                                       "AF_joint", "AF_joint_afr", "AF_joint_ami", "AF_joint_amr", "AF_joint_asj", "AF_joint_sas",
+                                       "AF_joint_eas", "AF_joint_fin", "AF_joint_mid", "AF_joint_nfe", "AF_joint_remaining",
+                                       
+                                       "nhomalt_joint", "nhomalt_joint_afr", "nhomalt_joint_ami", "nhomalt_joint_amr", 
+                                       "nhomalt_joint_sas", "nhomalt_joint_eas", "nhomalt_joint_asj", "nhomalt_joint_fin", 
+                                       "nhomalt_joint_mid", "nhomalt_joint_nfe", "nhomalt_joint_remaining",  
+                                       
+                                       "grpmax_joint", "AC_grpmax_joint", "AF_grpmax_joint", "AN_grpmax_joint", "nhomalt_grpmax_joint",
+                                       
+                                       "fafmax_faf95_max_joint", "fafmax_faf95_max_gen_anc_joint", "faf95_joint", "faf95_joint_afr",
+                                       "faf95_joint_amr", "faf95_joint_eas", "faf95_joint_mid", "faf95_joint_nfe", "faf95_joint_sas",  
+                                       
+                                       "fafmax_faf99_max_joint", "fafmax_faf99_max_gen_anc_joint", "faf99_joint", "faf99_joint_afr",
+                                       "faf99_joint_amr", "faf99_joint_eas", "faf99_joint_mid", "faf99_joint_nfe", "faf99_joint_sas"), colnames(DAT))]
+              
+              names(DAT) <- gsub("_joint", "", names(DAT))} 
+              
+              if (endsWith(x, "v4")) {idx_remain <- grepl("_remaining", names(DAT))
+                                      if (any(idx_remain)) {names(DAT)[idx_remain] <- gsub("_remaining", "_oth", names(DAT)[idx_remain])}
+                                      idx_grpmax <- grepl("grpmax", names(DAT))
+                                      if (any(idx_grpmax)) {names(DAT)[idx_grpmax] <- gsub("grpmax", "popmax", names(DAT)[idx_grpmax])}
+                                      if ("inbreeding_coeff" %in% names(DAT)) {DAT$inbreeding_coeff <- as.numeric(DAT$inbreeding_coeff)}}
+              
+               if (endsWith(x, "v2")) {colnames(DAT)[colnames(DAT) == "InbreedingCoeff"] <- "inbreeding_coeff"
+                                       cols_to_integer <- c("n_alt_alleles", "AN_afr", "AN_amr", "AN_asj", 
+                                                            "AN_fin", "AN_sas", "AN_eas", "AN_nfe", "AN_oth")
+                                       
+                                       cols_to_character <- c("allele_type")
+                                       for (col in cols_to_integer) {if (col %in% names(DAT)) {DAT[[col]] <- as.integer(DAT[[col]])}}
+                                       for (col in cols_to_character) {if (col %in% names(DAT)) {DAT[[col]] <- as.character(DAT[[col]])}}}
+               
+              assign(paste0(x), DAT)}
+                   
+rm(ID, DAT, FILTER, VEP, Dat, Data, idx_remain, idx_grpmax, var_colnames, cols_to_integer, cols_to_character, col, x)
+```
+
+# Identify version/region differences
+## Unique to v2
+* DP: Depth of informative coverage for each sample; reads with MQ = 255 or with bad mates are filtered
+```{r differencesA}
+setdiff(names(E11v2), names(E11v4))
+```
+
+## Unique to v4
+* MANE_SELECT: Matched Annotation from NCBI and EMBL-EBI project to select a default transcript per human protein coding locus that is well-supported, expressed and conserved.
+* VarDP: Depth over variant genotypes (does not include depth of reference samples)
+* Extra ethnic group: MID
+* Filtering allele frequency at 95% and 99% CI per gender in each ethnic group
+```{r differencesB}
+setdiff(names(E11v4), names(E11v2))
+```
+
+## Unique to Exome
+* Extra ethnic group: SAS
+```{r differencesC}
+rbind(data.frame(x = intersect(names(E11v4), names(E11v2)), y = "11e"),
+      data.frame(x = intersect(names(E16v4), names(E16v2)), y = "16e"), 
+      data.frame(x = intersect(names(G11v4), names(G11v2)), y = "11g"), 
+      data.frame(x = intersect(names(G16v4), names(G16v2)), y = "16g")) %>%
+      mutate(value = 1) %>% 
+      spread(key = y, value = value, fill = 0) %>%
+      filter(`11g` == 0 | `16g` == 0) %>% 
+      dplyr::select(x) %>%
+      as.vector()
+```
+
+# Merge data into a signular dataframe
+```{r merge}
+Data <- bind_rows(list(E11v2, E16v2, G11v2, G16v2,
+                       E11v4, E16v4, G11v4, G16v4,
+                       J11v4, J16v4), .id = "SourceDataFrame") %>%
+        mutate(version = if_else(SourceDataFrame %in% 1:4, "GnomADv2.0", "GnomADv4.1"),
+               region = case_when(SourceDataFrame %in% c(1, 2, 5, 6) ~ "exome",
+                                  SourceDataFrame %in% c(3, 4, 7, 8) ~ "genome",
+                                  SourceDataFrame %in% c(9, 10) ~ "joint")) %>%
+        dplyr::select(version, region, everything()) %>%
+        dplyr::select(-SourceDataFrame)
+
+rm(E11v2, E16v2, G11v2, G16v2, E11v4, E16v4, G11v4, G16v4, J11v4, J16v4)
+```
+
+# Data structure corrections
+```{r structure}
+int_cols <- c("AC", "AC_afr", "AC_amr", "AC_asj", "AC_fin", "AC_eas", "AC_nfe", "AC_oth", "AC_sas", "AC_ami", "AC_mid", "AC_popmax",
+              "AN", "AN_afr", "AN_amr", "AN_asj", "AN_fin", "AN_eas", "AN_nfe", "AN_oth", "AN_sas", "AN_ami", "AN_mid", "AN_popmax",
+              "nhomalt",   "nhomalt_afr", "nhomalt_amr", "nhomalt_asj", "nhomalt_fin", "nhomalt_eas", "nhomalt_oth", "nhomalt_nfe", 
+              "nhomalt_sas", "nhomalt_ami", "nhomalt_mid", "nhomalt_popmax")
+
+num_cols <- c("faf95", "faf95_afr", "faf95_amr", "faf95_eas", "faf95_nfe", "faf95_sas",
+              "faf99", "faf99_afr", "faf99_amr", "faf99_eas", "faf99_nfe", "faf99_sas",
+              "AF_oth", "AF_nfe", "AF_eas", "AF_sas", "AF", "AF_popmax", "AF_afr", 
+              "AF_fin", "AF_asj", "AF_amr",  "AF_ami", "AF_mid", "fafmax_faf95_max", 
+              "fafmax_faf99_max")
+
+chr_cols <- c("fafmax_faf95_max_gen_anc", "fafmax_faf99_max_gen_anc")
+
+Data$popmax <- as.character(Data$popmax)
+
+Data[int_cols] <- lapply(Data[int_cols], function(x) as.integer(as.character(x)))
+Data[num_cols] <- lapply(Data[num_cols], function(x) as.numeric(as.character(x)))
+Data[chr_cols] <- lapply(Data[chr_cols], function(x) as.character(as.character(x)))
+
+char_to_na <- function(x) ifelse(x %in% c("NULL", ".", ""), NA, x)
+
+Data$popmax <- char_to_na(Data$popmax)
+Data$fafmax_faf95_max_gen_anc <- char_to_na(Data$fafmax_faf95_max_gen_anc)
+Data$fafmax_faf99_max_gen_anc <- char_to_na(Data$fafmax_faf99_max_gen_anc)
+
+empty_cols <- names(Data)[colSums(is.na(Data)) == nrow(Data)]
+Data <- dplyr::select(Data, -any_of(empty_cols))
+
+Data <- Data %>%
+        mutate(LoF = na_if(LoF, ""),
+               LoF_filter = na_if(LoF_filter, ""),
+               LoF_flags = na_if(LoF_flags, ""),
+               LoF_info = na_if(LoF_info, ""))
+
+rm(int_cols, num_cols, chr_cols, empty_cols, char_to_na)
+```
+
+# Select variants within genes of interest
+```{r genes}
+Data <- Data %>% mutate(Gene = ifelse(Gene == "283111", "ENSG00000176742",
+                               ifelse(Gene == "3043", "ENSG00000244734",
+                               ifelse(Gene == "3045",  "ENSG00000223609",
+                               ifelse(Gene == "3044", "HBBP1",
+                               ifelse(Gene == "3047", "ENSG00000213934",
+                               ifelse(Gene == "3048", "ENSG00000196565",
+                               ifelse(Gene == "3046", "ENSG00000213931",
+                               ifelse(Gene == "79339", "ENSG00000183251",
+                               ifelse(Gene == "79345", "ENSG00000279012",
+                               ifelse(Gene == "282763", "ENSG00000167355",
+                               ifelse(Gene == "390058", "ENSG00000176239",
+                               ifelse(Gene == "390059", "ENSG00000184698",
+                               ifelse(Gene == "79470", "ENSG00000184321",
+                               ifelse(Gene == "390061", "ENSG00000167360",
+                               ifelse(Gene == "390063", "ENSG00000167359",
+                               ifelse(Gene == "390064", "ENSG00000187918",
+                               ifelse(Gene == "390066", "ENSG00000181609",
+                               ifelse(Gene == "50613", "ENSG00000175520",
+                               ifelse(Gene == "4350", "ENSG00000103152",
+                               ifelse(Gene == "3050", "ENSG00000130656",
+                               ifelse(Gene == "3042", "ENSG00000206177",
+                               ifelse(Gene == "107983982", "LOC107983982", 
+                               ifelse(Gene == "3040", "ENSG00000188536",
+                               ifelse(Gene == "3039", "ENSG00000206172",
+                               ifelse(Gene == "3049", "ENSG00000086506", 
+                               ifelse(Gene == "", NA, Gene)))))))))))))))))))))))))),
+                        SYMBOL = ifelse(SYMBOL == "", NA, SYMBOL),
+                        GeneLocation = ifelse(start >= 5225464 & end <= 5227071 & chr == "chr11", "HBB",
+                                       ifelse(start >= 5232838 & end <= 5234483 & chr == "chr11", "HBD",
+                                       ifelse(start >= 5248269 & end <= 5249857 & chr == "chr11", "HBG1",
+                                       ifelse(start >= 152644 & end <= 154503 & chr == "chr16", "HBZ",
+                                       ifelse(start >= 172876 & end <= 173710 & chr == "chr16", "HBA2",
+                                       ifelse(start >= 176680 & end <= 177522 & chr == "chr16", "HBA1",
+                                       ifelse(start >= 5253188 & end <= 5254781 & chr == "chr11", "HBG2",
+                                       ifelse(start >= 5268345 & end <= 5269945 & chr == "chr11", "HBE1",
+                                       ifelse(start >= 5270791 & end <= 5292315 & chr == "chr11", "βLCR",
+                                       ifelse(start >= 106756 & end <= 116059 & chr == "chr16", "HS40",
+                                              "Non-target genes or intergenic regions"))))))))))) %>% 
+                 mutate(SYMBOL = ifelse(SYMBOL %in% c("HBB", "HBD", "HBG1", "HBG2", "HBE1",  "HBZ", "HBA2", "HBA1"), SYMBOL, NA),
+                        Gene = ifelse(Gene %in% c("ENSG00000244734", "ENSG00000223609", "ENSG00000213934", 
+                                                  "ENSG00000196565", "ENSG00000213931",  "ENSG00000130656", 
+                                                  "ENSG00000188536", "ENSG00000206172"), Gene, NA)) %>%
+                 rename(GeneAffected = SYMBOL,
+                        GeneAffectedID = Gene) %>%
+                 filter(!is.na(GeneLocation) | GeneLocation != "Non-target genes or intergenic regions")
+
+table(Data$GeneAffected, Data$GeneLocation, useNA = "ifany")
+```
+
+# Select variant consequence of greatest severity
+```{r consequence}
+consequence_severity <- c(transcript_ablation = 41,        # Consequences ranked by severity based on 
+                          splice_acceptor_variant = 40,    # [https://asia.ensembl.org/info/genome/variation/prediction/predicted_data.html]
+                          splice_donor_variant = 39,
+                          stop_gained = 38,
+                          frameshift_variant = 37,
+                          stop_lost = 36,
+                          start_lost = 35,
+                          transcript_amplification = 34,
+                          feature_elongation = 33,
+                          feature_truncation = 32,
+                          inframe_insertion = 31,
+                          inframe_deletion = 30,
+                          missense_variant = 29,
+                          protein_altering_variant = 28,
+                          splice_donor_5th_base_variant = 27,
+                          splice_region_variant = 26,
+                          splice_donor_region_variant = 25,
+                          splice_polypyrimidine_tract_variant = 24,
+                          incomplete_terminal_codon_variant = 23,
+                          start_retained_variant = 22,
+                          stop_retained_variant = 21,
+                          synonymous_variant = 20,
+                          coding_sequence_variant = 19,
+                          mature_miRNA_variant = 18,
+                          `5_prime_UTR_variant` = 17,
+                          `3_prime_UTR_variant` = 16,
+                          non_coding_transcript_exon_variant = 15,
+                          intron_variant = 14,
+                          NMD_transcript_variant = 13,
+                          non_coding_transcript_variant = 12,
+                          coding_transcript_variant = 11,
+                          upstream_gene_variant = 10,
+                          downstream_gene_variant = 9,
+                          TFBS_ablation = 8,
+                          TFBS_amplification = 7,
+                          TF_binding_site_variant = 6,
+                          regulatory_region_ablation = 5,
+                          regulatory_region_amplification = 4,
+                          regulatory_region_variant = 3,
+                          intergenic_variant = 2,
+                          sequence_variant = 1)
+
+severity_computation <- function(combination) {values <- strsplit(combination, "&")[[1]]
+                                               max(consequence_severity[values], default = 0)}
+
+Data$Severity <- sapply(Data$Consequence, severity_computation)
+
+Data <- Data %>%
+        mutate(CANONICAL = ifelse(CANONICAL == "YES", 1, ifelse(is.na(CANONICAL), 0, 0))) %>%
+        group_by(version, region, chr, group) %>%
+        arrange(desc(CANONICAL), desc(Severity)) %>%
+        mutate(original_consequence_count = n()) %>%
+      
+        # Select mane consequence [gnomADv4.0 only]
+        filter(if (any(original_consequence_count > 1 & !is.na(MANE_SELECT))) MANE_SELECT != "" else TRUE) %>% 
+        mutate(retained_consequence_count = n()) %>%
+  
+        # Select canonical consequence
+        filter(if (any(retained_consequence_count > 1)) CANONICAL == 1 else TRUE) %>% 
+        mutate(retained_consequence_count = n()) %>%
+  
+        # Select consequence with greatest severity
+        slice_max(Severity, with_ties = TRUE) %>%
+        mutate(retained_consequence_count = n()) %>%
+  
+        # Select consequence with greatest impact
+        filter(if (any(retained_consequence_count > 1 & length(unique(IMPACT)) > 1)) {if (any(IMPACT == "HIGH")) IMPACT == "HIGH"
+                                                                                      else if (any(IMPACT == "MODERATE")) IMPACT == "MODERATE"
+                                                                                      else if (any(IMPACT == "LOW")) IMPACT == "LOW"
+                                                                                      else IMPACT == "MODIFIER"} else TRUE) %>%
+        mutate(retained_consequence_count = n()) %>%
+  
+        # Correct consequences duplicated due to Ensembl & Mane identifiers across rows
+        group_by(version, region, chr, GeneLocation, group) %>%
+        mutate(MANE = ifelse(grepl("ENST", MANE_SELECT), MANE_SELECT, NA),     
+               ENSEMBL = ifelse(grepl("NM_", MANE_SELECT), MANE_SELECT, NA)) %>%
+        dplyr::select(-MANE_SELECT, -HIGH_INF_POS, -REF_Start, -REF_End, -REF_Width) %>%
+        mutate(ENSEMBL = ifelse(is.na(ENSEMBL) & retained_consequence_count != 1, lag(ENSEMBL), ENSEMBL)) %>%
+        filter(if (any(retained_consequence_count != 1 & !is.na(ENSEMBL))) !is.na(MANE) else TRUE) %>% 
+        group_by(version, region, chr, group) %>%
+        mutate(retained_consequence_count = n()) %>%
+        ungroup() %>%
+        dplyr::select(version, region, chr, GeneLocation,
+                      STRAND, start, end, id, REF, ALT, FILTER, variant_type, allele_type,
+                      group, original_consequence_count, retained_consequence_count,
+                      Consequence, Severity, IMPACT, BIOTYPE, CANONICAL, MANE, ENSEMBL,
+                      HGVSc, VARIANT_CLASS, Allele, Codons, Amino_acids, 
+                      LoF, LoF_filter, LoF_flags, LoF_info, everything()) %>%
+  
+        # Consolidate information for variants that a single consequence could not be selected
+        group_by(version,	region,	chr, group) %>%
+        mutate(GeneLocation = if (any(retained_consequence_count > 1)) paste(unique(GeneLocation), collapse = "/") else GeneLocation,
+               HGVSc = if (any(retained_consequence_count > 1)) paste(unique(HGVSc), collapse = ",") else HGVSc,
+               Consequence = if (any(retained_consequence_count > 1)) paste(unique(Consequence), collapse = ",") else Consequence,
+               IMPACT = if (any(retained_consequence_count > 1)) paste(unique(IMPACT), collapse = ",") else IMPACT,
+               BIOTYPE = if (any(retained_consequence_count > 1)) paste(unique(BIOTYPE), collapse = ",") else BIOTYPE,
+               MANE = if (any(retained_consequence_count > 1)) paste(unique(MANE), collapse = ",") else MANE,
+               ENSEMBL = if (any(retained_consequence_count > 1)) paste(unique(ENSEMBL), collapse = ",") else ENSEMBL,
+               VARIANT_CLASS = if (any(retained_consequence_count > 1)) paste(unique(VARIANT_CLASS), collapse = ",") else VARIANT_CLASS,
+               Allele = if (any(retained_consequence_count > 1)) paste(unique(Allele), collapse = ",") else Allele,
+               Codons = if (any(retained_consequence_count > 1)) paste(unique(Codons), collapse = ",") else Codons,
+               Amino_acids = if (any(retained_consequence_count > 1)) paste(unique(Amino_acids), collapse = ",") else Amino_acids,
+               LoF = if (any(retained_consequence_count > 1)) paste(unique(LoF), collapse = ",") else LoF,
+               LoF_filter = if (any(retained_consequence_count > 1)) paste(unique(LoF_filter), collapse = ",") else LoF_filter,
+               LoF_flags = if (any(retained_consequence_count > 1)) paste(unique(LoF_flags), collapse = ",") else LoF_flags,
+               LoF_info = if (any(retained_consequence_count > 1)) paste(unique(LoF_info), collapse = ",") else LoF_info) %>%
+        ungroup() %>%
+        distinct() %>% 
+        mutate(LoF = ifelse(LoF == "NA", NA, LoF),
+               LoF_filter = ifelse(LoF_filter == "NA", NA, LoF_filter),
+               LoF_flags = ifelse(LoF_flags == "NA", NA, LoF_flags),
+               LoF_info = ifelse(LoF_info == "NA", NA, LoF_info))
+
+rm(consequence_severity, severity_computation)
+```
+
+# Retain variables of interest
+
+**Genetic ancestry groups:**
+ * **ALL:** Global
+ * **FIN:** Finnish European
+ * **NFE:** Non-Finnish European
+ * **AMR:** Admixed American
+ * **MID:** Middle Eastern
+ * **ASJ:** Ashkenazi Jewish
+ * **EAS:** East Asian
+ * **SAS:** South Asian
+ * **AFR:** African/African American
+ * **AMI:** Amish
+ * **OTH:** Remaining individuals that cannot be clustered into any of the above ethnic groups using Principal Component Analysis (PCA).
+ 
+ * **FAF:** Filtering Allele frequency at 95% and 99% confidence
+ * **MAX:** Highest value
+ * **ETH:** Genetic ancestry group applicable to highest value
+ 
+```{r filter}
+Data <- Data %>%
+        rename("Gene" = GeneLocation,
+               "Version" = version,
+               "Region" = region,
+               "Chromosome" = chr,
+               "Strand" = STRAND,
+               "Start" = start,
+               "End" = end,
+               "Ref" = REF,
+               "Alt" = ALT,
+               "Type" = variant_type,
+               "Class" = VARIANT_CLASS,
+               "Impact" = IMPACT,
+               "LOF" = LoF,
+               "ID" = id,
+               "Depth" = QD,
+               "Quality"= FILTER,
+               
+               "Homozygotes_ALL" = nhomalt,
+               "Homozygotes_FIN" = nhomalt_fin,
+               "Homozygotes_NFE" = nhomalt_nfe,
+               "Homozygotes_AMR" = nhomalt_amr,
+               "Homozygotes_MID" = nhomalt_mid,
+               "Homozygotes_ASJ" = nhomalt_asj,
+               "Homozygotes_EAS" = nhomalt_eas,
+               "Homozygotes_SAS" = nhomalt_sas,
+               "Homozygotes_AFR" = nhomalt_afr,
+               "Homozygotes_AMI" = nhomalt_ami,
+               "Homozygotes_OTH" = nhomalt_oth,
+               
+               "Allele.Frequency_ALL" = AF,
+               "Allele.Frequency_FIN" = AF_fin,
+               "Allele.Frequency_NFE" = AF_nfe,
+               "Allele.Frequency_AMR" = AF_amr,
+               "Allele.Frequency_MID" = AF_mid,
+               "Allele.Frequency_ASJ" = AF_asj,
+               "Allele.Frequency_EAS" = AF_eas,
+               "Allele.Frequency_SAS" = AF_sas,
+               "Allele.Frequency_AFR" = AF_afr,
+               "Allele.Frequency_AMI" = AF_ami,
+               "Allele.Frequency_OTH" = AF_oth,
+               
+               "Allele.Count_ALL" = AC,
+               "Allele.Count_FIN" = AC_fin,
+               "Allele.Count_NFE" = AC_nfe,
+               "Allele.Count_AMR" = AC_amr,
+               "Allele.Count_MID" = AC_mid,
+               "Allele.Count_ASJ" = AC_asj,
+               "Allele.Count_EAS" = AC_eas,
+               "Allele.Count_SAS" = AC_sas,
+               "Allele.Count_AFR" = AC_afr,
+               "Allele.Count_AMI" = AC_ami,
+               "Allele.Count_OTH" = AC_oth,
+               
+               "Allele.Total_ALL" = AN,
+               "Allele.Total_FIN" = AN_fin,
+               "Allele.Total_NFE" = AN_nfe,
+               "Allele.Total_AMR" = AN_amr,
+               "Allele.Total_MID" = AN_mid,
+               "Allele.Total_ASJ" = AN_asj,
+               "Allele.Total_EAS" = AN_eas,
+               "Allele.Total_SAS" = AN_sas,
+               "Allele.Total_AFR" = AN_afr,
+               "Allele.Total_AMI" = AN_ami,
+               "Allele.Total_OTH" = AN_oth,
+               
+               "FAF95_ALL" = faf95,
+               "FAF95_NFE" = faf95_nfe,
+               "FAF95_AMR" = faf95_amr,
+               "FAF95_EAS" = faf95_eas,
+               "FAF95_SAS" = faf95_sas,
+               "FAF95_AFR" = faf95_afr,
+               
+               "FAF99_ALL" = faf99,
+               "FAF99_NFE" = faf99_nfe,
+               "FAF99_AMR" = faf99_amr,
+               "FAF99_EAS" = faf99_eas,
+               "FAF99_SAS" = faf99_sas,
+               "FAF99_AFR" = faf99_afr,
+               
+               "FAF95_MAX" = fafmax_faf95_max,                # Max FAF (95% CI) across genetic ancestry groups
+               "FAF95_MAXETH" = fafmax_faf95_max_gen_anc,     # Genetic ancestry group with max FAF (95% CI) 
+               "FAF99_MAX" = fafmax_faf99_max,                # Max FAF (99% CI) across genetic ancestry groups
+               "FAF99_MAXETH" = fafmax_faf99_max_gen_anc) %>% # Genetic ancestry group with max FAF (99% CI)      
+  
+        dplyr::select(Version, Region, Strand, Chromosome, Gene, Start, End, Ref, Alt, Consequence,
+                      Type, Class, Impact, LOF, ID, Depth, Quality,
+                      Homozygotes_ALL, Homozygotes_AFR, Homozygotes_AMI, Homozygotes_AMR,
+                      Homozygotes_ASJ, Homozygotes_EAS, Homozygotes_FIN, Homozygotes_MID,
+                      Homozygotes_NFE, Homozygotes_SAS, Homozygotes_OTH, Allele.Frequency_ALL, 
+                      Allele.Frequency_AFR, Allele.Frequency_AMI, Allele.Frequency_AMR,
+                      Allele.Frequency_ASJ, Allele.Frequency_EAS, Allele.Frequency_FIN, 
+                      Allele.Frequency_MID, Allele.Frequency_NFE, Allele.Frequency_SAS, Allele.Frequency_OTH,
+                      Allele.Count_ALL, Allele.Count_AFR, Allele.Count_AMI, Allele.Count_AMR,
+                      Allele.Count_ASJ, Allele.Count_EAS, Allele.Count_FIN, Allele.Count_MID, 
+                      Allele.Count_NFE, Allele.Count_SAS, Allele.Count_OTH,
+                      Allele.Total_ALL, Allele.Total_AFR, Allele.Total_AMI, Allele.Total_AMR,
+                      Allele.Total_ASJ, Allele.Total_EAS, Allele.Total_FIN, Allele.Total_MID, 
+                      Allele.Total_NFE, Allele.Total_SAS, Allele.Total_OTH, 
+                      FAF95_ALL, FAF95_AFR, FAF95_AMR, FAF95_EAS, FAF95_NFE, FAF95_SAS,
+                      FAF99_ALL, FAF99_AFR, FAF99_AMR, FAF99_EAS, FAF99_NFE, FAF99_SAS, 
+                      FAF95_MAX, FAF99_MAX, FAF95_MAXETH, FAF99_MAXETH) %>%
+        mutate(Quality = ifelse(Quality == "PASS", "Passed", "Failed"),
+               Region = ifelse(Region == "exome", "Exome", 
+                        ifelse(Region == "genome", "Genome", "Joint")),
+               Chromosome = ifelse(Chromosome == "chr11", 11, 16),
+               Type = case_when(Type == "snv" & Class == "SNV" ~ "SNV",
+                                Type == "multi-snv" & Class == "SNV" ~ "Multi SNV",
+                                Type == "indel" & Class == "insertion" ~ "Insertion",
+                                Type == "indel" & Class == "deletion" ~ "Deletion",
+                                Type == "multi-indel" ~ "Multi Indel",
+                                Type == "mixed" ~ "Mixed",
+                                TRUE ~ "Other")) %>%
+        distinct()
+```
+
+# Export
+```{r export}
+write_csv(Data, file = "Data.csv")
+```
