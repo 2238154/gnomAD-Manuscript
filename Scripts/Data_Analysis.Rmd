@@ -202,6 +202,20 @@ Data <- Data %>%
         mutate(Version = ifelse(Version == "GnomADv4.1", "gnomADv4.1",
                          ifelse(Version == "GnomADv2.0", "gnomADv2.1.1", NA)))
 
+
+# Common quality-assessment colors for Figure 1
+qa_colors <- scales::alpha(c("Pass" = "#35B779",
+                             "Fail → Pass" = "#73D055",
+                             "Pass → Fail" = "#2A788E",
+                             "Fail" = "#440154"), 0.7)
+
+qa_scale <- function() {scale_fill_manual(name = "Quality assessment",
+                                          values = qa_colors,
+                                          limits = names(qa_colors),
+                                          breaks = names(qa_colors),
+                                          drop = FALSE)}
+
+
 Fig1a <- Data %>%
          mutate(ID = paste(Chromosome, Start, Ref, Alt, sep = "_"),
                 Region = factor(Region, levels = c("Exome", "Genome", "Joint")),
@@ -223,8 +237,8 @@ Fig1A <- Fig1a %>%
          geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
          facet_wrap(~ Version, strip.position = "top", scales = "free_x") +
          scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("Pass" = "#35B779",
-                                            "Fail" = "#440154"), 0.7)) +
+         qa_scale() +
+         scale_y_continuous(breaks = seq(0, 100, 20)) +
          geom_text(aes(label = ifelse(is.nan(Percent), paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)"))), 
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
                    vjust = -0.5, 
@@ -258,79 +272,97 @@ Fig1A
 ## Panel B: Variant novelty & quality assesment changes across GnomAD versions
 ```{r 1B}
 Fig1b <- Data %>%
-         filter(Region != "Joint") %>%
-         mutate(ID = paste(Chromosome, Start, Ref, Alt, sep = "_"),
-                Region = factor(Region, levels = c("Exome", "Genome")),
-                Version = factor(Version, levels = c("gnomADv2.1.1", "gnomADv4.1")),
-                Quality = ifelse(Quality == "Passed", "Pass", "Fail"),
-                Quality = factor(Quality, levels = c("Pass", "Fail"))) %>%
-         dplyr::select(ID, Version, Region, Quality) %>%
-         pivot_wider(names_from = Version,
-                     values_from = Quality,
-                     names_prefix = "Q_",
-                     values_fn = list(Quality = dplyr::first),
-                     values_fill = list(Quality = NA_character_)) %>%
-         mutate(Category = case_when(!is.na(Q_gnomADv2.1.1) & !is.na(Q_gnomADv4.1) ~ "Common to both releases",
-                                     !is.na(Q_gnomADv2.1.1) &  is.na(Q_gnomADv4.1) ~ "Unique to gnomADv2.1.1",
-                                     is.na(Q_gnomADv2.1.1) & !is.na(Q_gnomADv4.1) ~ "Unique to gnomADv4.1"),
-                Quality = case_when(Category == "Common to both releases" & Q_gnomADv2.1.1 == "Pass" & Q_gnomADv4.1 == "Pass" ~ "Pass",
-                                    Category == "Common to both releases" & Q_gnomADv2.1.1 == "Fail" & Q_gnomADv4.1 == "Fail" ~ "Fail",
-                                    Category == "Common to both releases" & Q_gnomADv2.1.1 == "Pass" & Q_gnomADv4.1 == "Fail" ~ "Pass → Fail",
-                                    Category == "Common to both releases" & Q_gnomADv2.1.1 == "Fail" & Q_gnomADv4.1 == "Pass" ~ "Fail → Pass",
-                                    Category == "Unique to gnomADv2.1.1" & Q_gnomADv2.1.1 == "Pass" ~ "Pass",
-                                    Category == "Unique to gnomADv2.1.1" & Q_gnomADv2.1.1 == "Fail" ~ "Fail",
-                                    Category == "Unique to gnomADv4.1" & Q_gnomADv4.1 == "Pass" ~ "Pass",
-                                    Category == "Unique to gnomADv4.1" & Q_gnomADv4.1 == "Fail" ~ "Fail", TRUE ~ "Other")) %>%
-         filter(Quality != "Other") %>%      
-         group_by(Category, Quality) %>%
-         summarise(Count = n(), .groups = "drop_last") %>%
-         mutate(Percent = round(Count / sum(Count) * 100, 1),
-                Quality = factor(Quality, levels = c("Pass", "Fail → Pass", "Pass → Fail", "Fail")),
-                Category = factor(Category, levels = c("Common to both releases", "Unique to gnomADv2.1.1", "Unique to gnomADv4.1"))) %>%
-         ungroup()
+         dplyr::filter(Gene %in% c("HBA1", "HBA2", "HBB", "HBD",
+                                   "HBE1", "HBG1", "HBG2", "HBZ"),
+                       Region %in% c("Exome", "Genome")) %>%
+         dplyr::mutate(Version = dplyr::case_when(as.character(Version) %in% c("GnomADv2.0", "gnomADv2.1.1") ~ "gnomADv2.1.1",
+                                                  as.character(Version) %in% c("GnomADv4.1", "gnomADv4.1") ~ "gnomADv4.1",
+                                                  TRUE ~ NA_character_),
+                       ID = paste(Chromosome, Start, Ref, Alt, sep = "_"),
+                       IsPass = as.character(Quality) == "Passed") %>%
+         dplyr::filter(!is.na(Version)) %>%
+         dplyr::group_by(ID) %>%
+         dplyr::summarise(v2_present = any(Version == "gnomADv2.1.1"),
+                          v4_present = any(Version == "gnomADv4.1"),
+                          v2_pass = any(Version == "gnomADv2.1.1" & IsPass),
+                          v4_pass = any(Version == "gnomADv4.1" & IsPass),
+                          .groups = "drop") %>%
+         dplyr::mutate(Category = dplyr::case_when(v2_present & v4_present ~ "Common to both releases",
+                                                   v2_present & !v4_present ~ "Unique to gnomADv2.1.1",
+                                                   !v2_present & v4_present ~ "Unique to gnomADv4.1",
+                                                   TRUE ~ NA_character_),
+                       Quality = dplyr::case_when(v2_present & v4_present & v2_pass & v4_pass ~ "Pass",
+                                                  v2_present & v4_present & !v2_pass & v4_pass ~ "Fail → Pass",
+                                                  v2_present & v4_present & v2_pass & !v4_pass ~ "Pass → Fail",
+                                                  v2_present & v4_present & !v2_pass & !v4_pass ~ "Fail",
+                                                  v2_present & !v4_present & v2_pass ~ "Pass",
+                                                  v2_present & !v4_present & !v2_pass ~ "Fail",
+                                                  !v2_present & v4_present & v4_pass ~ "Pass",
+                                                  !v2_present & v4_present & !v4_pass ~ "Fail",
+                                                  TRUE ~ NA_character_)) %>%
+         dplyr::count(Category, Quality, name = "Count") %>%
+         dplyr::group_by(Category) %>%
+         dplyr::mutate(Percent = round(Count / sum(Count) * 100, 1)) %>%
+         dplyr::ungroup() %>%
+         dplyr::mutate(Category = factor(Category, levels = c("Common to both releases",
+                                                              "Unique to gnomADv2.1.1",
+                                                              "Unique to gnomADv4.1")),
+                       Quality = factor(Quality, levels = c("Pass",
+                                                            "Fail → Pass",
+                                                            "Pass → Fail",
+                                                            "Fail")))
 
-Fig1b
+print(Fig1b)
+print(Fig1b %>%
+      dplyr::group_by(Category) %>%
+      dplyr::summarise(Total = sum(Count), .groups = "drop"))
 
-Fig1B <- Fig1b %>%
-         ggplot(aes(x = Category, y = Percent, fill = Quality)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
-         scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("Pass" = "#35B779",
-                                            "Fail → Pass" = "#73D055",
-                                            "Pass → Fail" = "#2A788E", 
-                                            "Fail" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(is.nan(Percent), paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")), group = Quality), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   vjust = -0.5, 
-                   size = 3.5, 
-                   family = "Arial") +
+Fig1B <- ggplot(Fig1b,
+                aes(x = Category, y = Percent, fill = Quality)) +
+         geom_col(position = position_dodge2(width = 0.9,
+                                             padding = 0.1,
+                                             preserve = "single"),
+                  width = 0.9) +
+         geom_text(aes(label = sprintf("%s\n(%.1f%%)", Count, Percent),
+                       group = Quality),
+                   position = position_dodge2(width = 0.9,
+                                              padding = 0.1,
+                                              preserve = "single"),
+                   vjust = -0.5,
+                   size = 3.5,
+                   family = "Arial",
+                   lineheight = 0.95) +
+         qa_scale() +
+         scale_y_continuous(limits = c(0, 100),
+                            breaks = seq(0, 100, 20),
+                            expand = expansion(mult = c(0, 0))) +
+         
+         scale_x_discrete(labels = c("Common to both releases" = "Common to both releases\n(n = 2,665)",
+                                     "Unique to gnomADv2.1.1" = "Unique to gnomADv2.1.1\n(n = 146)",
+                                     "Unique to gnomADv4.1" = "Unique to gnomADv4.1\n(n = 8,802)"),
+                          expand = expansion(mult = c(0.05, 0.05))) +
          guides(fill = guide_legend(nrow = 1,
                                     title.position = "top",
                                     title.hjust = 0.5)) +
          labs(fill = "Quality assessment",
               x = "Variant membership in gnomAD releases",
               y = "Percentage of variants (%)") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
+         theme_minimal(base_family = "Arial",
+                       base_size = 14) +
          theme(text = element_text(color = "black"),
                legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
+               legend.text = element_text(size = 11.8),
+               legend.title = element_text(face = "bold",
+                                           size = 11.8),
+               axis.text = element_text(size = 11.8),
+               axis.title = element_text(face = "bold",
                                          size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text  = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(4, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
+               axis.title.x = element_text(margin = margin(t = 10)),
+               axis.title.y = element_text(margin = margin(r = 10)),
+               panel.grid.major = element_line(linetype = "dotted",
+                                               color = "grey80"),
+               panel.grid.minor = element_line(linetype = "dotted",
+                                               color = "grey90"))
 
 Fig1B
 ```
@@ -370,47 +402,123 @@ Fig1c <- Data %>%
          mutate(Total = sum(Count),   
                 Percent = round(Count / Total * 100, 1),
                 Quality = factor(Quality, levels = c("Pass", "Fail → Pass", "Pass → Fail", "Fail"))) %>%
-         ungroup()
+         ungroup() %>%
+         mutate(Regions = vapply(Regions, paste, character(1), collapse = " ∩ "),
+                Regions = factor(Regions, levels = c("Genome ∩ Exome ∩ Joint", setdiff(sort(unique(Regions)), "Genome ∩ Exome ∩ Joint"))))
 
 Fig1c
 
 Fig1C <- ggplot(Fig1c, aes(x = Regions, y = Percent, fill = Quality)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9, 
-                  show.legend = TRUE) +
-         geom_text(aes(label = ifelse(is.nan(Percent), paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")), fill = Quality),
+         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
+         geom_text(aes(label = paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")),
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   vjust = -0.5, 
+                   vjust = -0.5,
                    size = 3.5,
-                   family = "Arial") +
-         scale_x_upset() +
-         scale_fill_manual(values = alpha(c("Pass" = "#35B779",
-                                            "Fail → Pass" = "#73D055",
-                                            "Pass → Fail" = "#2A788E", 
-                                            "Fail" = "#440154"), 0.7),   drop = FALSE) +
-         guides(fill = guide_legend(nrow = 1, title.position = "top", title.hjust = 0.5)) +
-         labs(fill = "Quality assessment",
-              x = "Sequencing dataset interactions",
-              y = "Percentage of variants (%)") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
-               plot.caption = element_text(size = 11.8, margin = margin(t = 6)),
-               strip.text = element_text(face = "bold", size = 11.8),
-               legend.text = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(4, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
+                   family = "Arial",
+                   show.legend = FALSE) +
+          scale_x_discrete(drop = TRUE) +
+          qa_scale() +
+          scale_y_continuous(breaks = seq(0, 100, 20)) +
+          guides(fill = guide_legend(nrow = 1, title.position = "top", title.hjust = 0.5)) +
+          labs(fill = "Quality assessment",
+               x = "Callset overlap in gnomADv4.1",
+               y = "Percentage of variants (%)") +
+          theme_minimal(base_family = "Arial", base_size = 14) +
+          theme(text = element_text(color = "black"),
+                legend.position = "bottom",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.caption = element_text(size = 11.8, margin = margin(t = 6)),
+                strip.text = element_text(face = "bold", size = 11.8),
+                legend.text = element_text(size = 11.8),
+                legend.title = element_text(face = "bold", size = 11.8),
+                axis.text = element_text(size = 11.8),
+                axis.title = element_text(face = "bold", size = 11.8),
+                axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
+                axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
+                panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+                panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
+                panel.spacing = unit(4, "lines"),
+                strip.placement = "inside",
+                strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
 
 Fig1C
+```
 
+## Compile Figure 1
+```{r Fig1}
+Fig1A_final <- Fig1A +
+               guides(fill = "none") +
+               coord_cartesian(ylim = c(0, 115),
+                               clip = "off",
+                               expand = FALSE) +
+               theme(plot.margin = margin(10, 8, 12, 8))
+
+Fig1B_final <- Fig1B +
+               labs(caption = "Quality assessment transitions: gnomAD v2.1.1 → v4.1") +
+               guides(fill = guide_legend(nrow = 1,
+                                          title.position = "top",
+                                          title.hjust = 0.5)) +
+               coord_cartesian(ylim = c(0, 115),
+                               clip = "off",
+                               expand = FALSE) +
+                theme(plot.caption.position = "plot",
+                      plot.caption = element_text(family = "Arial",
+                                                  size = 10,
+                                                  colour = "grey35",
+                                                  hjust = 1,
+                                                  margin = margin(t = 5, r = 5)),
+                      plot.margin = margin(10, 8, 12, 8))
+
+Fig1C_final <- Fig1C +
+               labs(caption = paste0("Quality assessment transitions: individual exome/genome ",
+                                     "→ joint callset")) +
+               guides(fill = "none") +
+               coord_cartesian(ylim = c(0, 115),
+                               clip = "off",
+                               expand = FALSE) +
+               theme(plot.caption.position = "plot",
+                     plot.caption = element_text(family = "Arial",
+                                                 size = 10,
+                                                 colour = "grey35",
+                                                 hjust = 1,
+                                                 margin = margin(t = 5, r = 5)),
+                     plot.margin = margin(10, 8, 12, 8))
+
+# Assemble figure using a dedicated bottom legend area
+Fig1 <- (Fig1A_final +
+         Fig1B_final +
+         Fig1C_final +
+         guide_area() +
+        plot_layout(ncol = 1,
+                    heights = c(1, 1.15, 1.15, 0.18),
+                    guides = "collect") +
+        plot_annotation(tag_levels = list(c("A", "B", "C")),
+                        theme = theme(plot.tag = element_text(family = "Arial",
+                                                              face = "bold",
+                                                              size = 16,
+                                                              hjust = 0),
+                                      plot.tag.location = "margin",
+                                      plot.tag.position = "topleft",
+                                      plot.margin = margin(5, 5, 5, 5)))) &
+                       theme(legend.position = "bottom",
+                             legend.justification = "center",
+                             legend.direction = "horizontal",
+                             legend.box = "vertical")
+
+Fig1
+
+ggsave(filename = paste0("Fig1.png"),
+       plot = Fig1,
+       units = "in",
+       dpi = 300,
+       width = 10.5,
+       height = 12)
+
+rm(Fig1A_final, Fig1B_final, Fig1C_final, qa_scale, qa_colors)
+```
+
+# Extra
+```{r summaries}
 G2 <- Data %>% filter(Version == "gnomADv2.1.1" & Region == "Genome") %>% nrow()
 E2 <- Data %>% filter(Version == "gnomADv2.1.1" & Region == "Exome") %>% nrow()
 G4 <- Data %>% filter(Version == "gnomADv4.1" & Region == "Genome") %>% nrow()
@@ -439,42 +547,209 @@ paste0("Percentage of all Genome and Exome variants shared with Joint with alter
 rm(G2, E2, G4, E4, J4, G2P, E2P, G4P, E4P, J4P)
 ```
 
-## Compile Figure 1
-```{r Fig1}
-Fig1A <- Fig1A + 
-         theme(legend.position = "none",
-               plot.margin = margin(1, 2, 10, 2),
-               panel.spacing = unit(0.8, "lines")) + 
-         coord_cartesian(ylim = c(0, 100), clip = "off") +
-         scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+# Figure 2: Characterization of variants unique to gnomAD releases that pass quality assessment per gene and ClinVar annotation
+```{r 2}
+pct_label <- function(x) {x <- round(x, 1)
+                          ifelse(x == 0 | x == 100,
+                                 sprintf("%.0f%%", x),
+                                 sprintf("%.1f%%", x))}
 
-Fig1B <- Fig1B +
-         theme(legend.position = "none",
-               plot.margin = margin(10, 1, 10, 2)) + 
-         coord_cartesian(ylim = c(0, 100), clip = "off") +
-         scale_x_discrete(expand = expansion(mult = c(0, 0.2)))
+gene_levels <- c("HBA1", "HBA2", "HBB", "HBD", "HBE1", "HBG1", "HBG2", "HBZ")
 
-Fig1C <- Fig1C + 
-         theme(plot.margin = margin(10, 2, 2, 2)) +
-         scale_y_continuous(expand = expansion(mult = c(0, 0.4)))
+release_levels <- c("Unique to gnomADv2.1.1",
+                    "Unique to gnomADv4.1")
 
-Fig1 <- ggdraw() +
-        draw_grob(patchwork::patchworkGrob((Fig1A / Fig1B / Fig1C) +
-                  plot_layout(ncol = 1, heights = c(1, 1, 1)))) +
-        draw_label("A", x = 0.01, y = 0.995, hjust = 0, vjust = 1, size = 16) +
-        draw_label("B", x = 0.01, y = 0.73, hjust = 0, vjust = 1, size = 16) +
-        draw_label("C", x = 0.01, y = 0.46, hjust = 0, vjust = 1, size = 16)
-Fig1
+class_bottom_to_top <- c("Not available",
+                         "Benign/Likely benign",
+                         "Uncertain significance",
+                         "Pathogenic/Likely pathogenic")
 
-ggsave(filename = "Fig1.png",
-       plot = Fig1, units = "in", dpi = 300,
-       width = 8.77, height = 9.5)
+Fig2_source <- Data %>%
+               dplyr::filter(Gene %in% gene_levels,
+                             as.character(Region) %in% c("Exome", "Genome")) %>%
+               dplyr::mutate(Version = dplyr::case_when(as.character(Version) %in% c("GnomADv2.0", "gnomADv2.1.1") ~ "gnomADv2.1.1",
+                                                        as.character(Version) %in% c("GnomADv4.1", "gnomADv4.1") ~ "gnomADv4.1",
+                                                        TRUE ~ NA_character_),
+                             ID = paste(Chromosome, Start, Ref, Alt, sep = "_"),
+                             QA = as.character(Quality),
+                             IsPass = QA %in% c("Passed", "Pass"),
+                             ClinVar_raw = trimws(as.character(ClinVar)),
+                             ClinVar_group = dplyr::case_when(is.na(ClinVar_raw) |  ClinVar_raw %in% c("", "Not available",
+                                                                                                       "no_classification_for_the_single_variant") ~ "Not available",
+                                                              ClinVar_raw %in% c("Benign",
+                                                                                 "Likely_benign",
+                                                                                 "Benign/Likely_benign",
+                                                                                 "Benign/Likely benign") ~ "Benign/Likely benign",
+                                                              ClinVar_raw %in% c("Pathogenic",
+                                                                                 "Likely_pathogenic",
+                                                                                 "Pathogenic/Likely_pathogenic",
+                                                                                 "Pathogenic/Likely pathogenic") ~ "Pathogenic/Likely pathogenic",
+                                                              ClinVar_raw %in% c("Uncertain_significance",
+                                                                                 "Uncertain significance",
+                                                                                 "other",
+                                                                                 "Pathogenic|other",
+                                                                                 "Conflicting_classifications_of_pathogenicity") ~ "Uncertain significance",
+                                                              TRUE ~ NA_character_)) %>%
+               dplyr::filter(!is.na(Version)) 
+
+Fig2_status <- Fig2_source %>%
+               dplyr::group_by(ID) %>%
+               dplyr::summarise(v2_present = any(Version == "gnomADv2.1.1"),
+                                v4_present = any(Version == "gnomADv4.1"),
+                                v2_pass = any(Version == "gnomADv2.1.1" & IsPass),
+                                v4_pass = any(Version == "gnomADv4.1" & IsPass),
+                                .groups = "drop") %>%
+               dplyr::mutate(Category = dplyr::case_when(v2_present & !v4_present ~ release_levels[1],
+                                                         !v2_present & v4_present ~ release_levels[2],
+                                                         TRUE ~ "Common to both releases")) %>%
+               dplyr::filter((Category == release_levels[1] & v2_pass) | (Category == release_levels[2] & v4_pass))
+
+Fig2_metadata <- Fig2_source  %>%
+                 dplyr::group_by(ID) %>%
+                 dplyr::summarise(n_genes = dplyr::n_distinct(Gene),
+                                  n_clinical_classes = dplyr::n_distinct(ClinVar_group[ClinVar_group != "Not available"]),
+                                  Gene = dplyr::first(Gene),
+                                  ClinVar = {annotated <- unique(ClinVar_group[ClinVar_group != "Not available"])
+                                  
+                                  if (length(annotated) == 0L) {"Not available"} else {annotated[1]}}, .groups = "drop")
+
+Fig2 <- Fig2_status  %>%
+        dplyr::left_join(Fig2_metadata %>%
+                         dplyr::select(ID, Gene, ClinVar),
+                         by = "ID") %>%
+        dplyr::count(Category, Gene, ClinVar, name = "Count")
+
+Fig2b <- tidyr::expand_grid(Category = factor(release_levels, levels = release_levels),
+                            Gene = factor(gene_levels, levels = gene_levels),
+                            ClinVar = factor(class_bottom_to_top, levels = class_bottom_to_top)) %>%
+         dplyr::left_join(Fig2 %>%
+                          dplyr::mutate(Category = factor(Category, levels = release_levels),
+                                        Gene = factor(Gene, levels = gene_levels),
+                                        ClinVar = factor(ClinVar, levels = class_bottom_to_top)),
+                          by = c("Category", "Gene", "ClinVar")) %>%
+         dplyr::mutate(Count = dplyr::coalesce(Count, 0L)) %>%
+         dplyr::group_by(Category, Gene) %>%
+         dplyr::mutate(Total = sum(Count),
+                       Percent = if_else(Total > 0,
+                                         100 * Count / Total,
+                                         0),
+                       Label = if_else(Count == 0L,
+                                       "—",
+                                       paste0(scales::comma(Count),
+                                              "\n(",
+                                              pct_label(Percent),
+                                              ")"))) %>%
+         dplyr::ungroup()
+
+Fig2b
+
+Fig2a <- Fig2b %>%
+         dplyr::distinct(Category, Gene, Total)
+
+Fig2a
+
+Fig2A <- ggplot(Fig2a,
+                aes(x = Gene, y = Total)) +
+         geom_point(size = 3,
+                    colour = "black") +
+         geom_text(aes(label = scales::comma(Total)),
+                   vjust = -0.85,
+                   size = 3.2,
+                   colour = "black") +
+         facet_grid(~ Category) +
+         scale_x_discrete(drop = FALSE) +
+         scale_y_log10(limits = c(3,
+                                  max(1500, max(Fig2a$Total) * 1.6)),
+                       breaks = c(10, 100, 1000),
+                       labels = scales::label_comma()) +
+         labs(x = NULL,
+              y = "Number of variants") +
+         theme_minimal(base_family = "Arial",
+                       base_size = 12) +
+         theme(text = element_text(colour = "black"),
+               strip.text = element_text(face = "bold",
+                                         size = 12),
+               strip.background = element_rect(fill = "#F6F6F5",
+                                               colour = "white"),
+               axis.text.x = element_blank(),
+               axis.ticks.x = element_blank(),
+               axis.title.y = element_text(face = "bold",
+                                           margin = margin(r = 10)),
+               panel.grid.major = element_line(linetype = "dotted",
+                                               colour = "grey80"),
+               panel.grid.minor = element_line(linetype = "dotted",
+                                               colour = "grey90"),
+               panel.spacing = unit(1.5, "lines"),
+               legend.position = "none")
+
+Fig2B <- ggplot(Fig2b,
+                aes(x = Gene,
+                    y = ClinVar,
+                    fill = Percent)) +
+         geom_tile(width = 0.96,
+                   height = 0.90,
+                   colour = "white",
+                   linewidth = 0.7) +
+         geom_text(aes(label = Label,
+                       colour = Percent >= 60),
+                   size = 3,
+                   lineheight = 0.92) +
+         scale_color_manual(values = c("FALSE" = "black",
+                                       "TRUE" = "white"),
+                            guide = "none") +
+         scale_fill_gradientn(colours = c("white",
+                                          "#35B779",
+                                          "#2A788E",
+                                          "#440154"),
+                              limits = c(0, 100),
+                              breaks = c(0, 25, 50, 75, 100),
+                              labels = scales::label_number(accuracy = 1),
+                              name = "Within-gene percentage (%)",
+                              guide = guide_colourbar(title.position = "top",
+                                                      title.hjust = 0.5)) +
+         scale_x_discrete(drop = FALSE) +
+         facet_grid(~ Category) +
+         labs(x = "Gene",
+              y = "ClinVar variant classification") +
+         theme_minimal(base_family = "Arial",
+                       base_size = 12) +
+         theme(text = element_text(colour = "black"),
+               strip.text = element_blank(),
+               axis.text = element_text(size = 11),
+               axis.title = element_text(face = "bold"),
+               axis.title.x = element_text(margin = margin(t = 8)),
+               axis.title.y = element_text(margin = margin(r = 10)),
+               panel.grid = element_blank(),
+               panel.spacing = unit(1.5, "lines"),
+               legend.position = "bottom",
+               legend.title = element_text(face = "bold"),
+               legend.box = "vertical")
+
+Fig2 <- (Fig2A / Fig2B) +
+         plot_layout(ncol = 1,
+                     heights = c(1, 2.3)) +
+         plot_annotation(tag_levels = list(c("A", "B")),
+                         theme = theme(plot.tag = element_text(family = "Arial",
+                                                               face = "bold",
+                                                               size = 16),
+                                       plot.tag.position = "topleft",
+                                       plot.tag.location = "margin",
+                                       plot.margin = margin(8, 10, 8, 10)))
+
+Fig2
+
+ggsave(filename = paste0("Fig2.png"),
+       plot = Fig2,
+       width = 12.5,
+       height = 8.5,
+       units = "in",
+       dpi = 300)
 ```
 
-# Figure 2
+# Figure 3
 ## Panel A: Spread of gnomADv4.1 release variants passing quality check across genes
-```{r 2A}
-Fig2a <- Data %>%
+```{r 3A}
+Fig3a <- Data %>%
          filter(Version == "gnomADv4.1" & Region == "Joint" & Quality == "Passed") %>%
          mutate(ID = paste(Chromosome, Start, Ref, Alt, sep = "_")) %>%
          dplyr::select(ID, Gene) %>%
@@ -483,9 +758,9 @@ Fig2a <- Data %>%
          mutate(Total = sum(Count),
                 Percent = round(Count / Total * 100, 1))
 
-Fig2a
+Fig3a
 
-Fig2A <- Fig2a %>%
+Fig3A <- Fig3a %>%
          ggplot(aes(x = Gene, y = Count)) +
          geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), 
                   width = 0.9,
@@ -523,7 +798,7 @@ Fig2A <- Fig2a %>%
                strip.placement = "inside",
                strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
 
-Fig2A
+Fig3A
 ```
 
 ## Panel B: gnomADv4.1 release variants passing quality check that are unique to a single genetic ancestry group
@@ -540,7 +815,7 @@ Fig2A
  * **AFR:** African/African American
  * **AMI:** Amish
  * **OTH:** Remaining individuals that cannot be clustered into any of the above ethnic groups using Principal Component Analysis (PCA)
-```{r 2B}
+```{r 3B}
 Total <- Data %>% 
          filter(Version == "gnomADv4.1" & Region == "Joint" & Quality == "Passed") %>% 
          nrow()
@@ -561,7 +836,7 @@ Total2 <- Data %>%
           dplyr::select(Ancestry, Total2) %>%
           distinct()
 
-Fig2b <- Data %>% 
+Fig3b <- Data %>% 
          filter(Version == "gnomADv4.1" & Region == "Joint" & Quality == "Passed") %>%
          dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, Allele.Count_AFR, Allele.Count_AMI, 
                                Allele.Count_AMR, Allele.Count_ASJ, Allele.Count_EAS, Allele.Count_FIN, 
@@ -589,34 +864,50 @@ Fig2b <- Data %>%
          mutate(Percent2 = round(Count / Total2 * 100, 1),
                 Percent2 = ifelse(is.nan(Percent2) | is.na(Percent2), 0, Percent2))
 
-Fig2b
+Fig3b
 
-Fig2ba <- Fig2b %>%
-          transmute(Ancestry, panel = "Number of variants",
+
+pct_label <- function(x) {x <- round(x, 1)
+                          ifelse(is.na(x) | is.nan(x), "0%",
+                                 ifelse(x == 0 | x == 100,
+                                        sprintf("%.0f%%", x),
+                                        sprintf("%.1f%%", x)))}
+
+
+Fig3ba <- Fig3b %>%
+          transmute(Ancestry,
+                    panel = "Number of variants",
                     y = Count,
-                    label = ifelse(is.nan(Percent), paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)"))) %>%
-          mutate(panel = factor(panel, levels = c("Number of variants", "Exclusive within ancestry (%)")))
+                    label = paste0(Count,
+                                   "\n(",
+                                   pct_label(Percent),
+                                   ")")) %>%
+          mutate(panel = factor(panel, levels = c("Number of variants",
+                                                  "Exclusive within ancestry (%)")))
 
-Fig2bb <- Fig2b %>%
-          transmute(Ancestry, panel = "Exclusive within ancestry (%)",
+
+Fig3bb <- Fig3b %>%
+          transmute(Ancestry,
+                    panel = "Exclusive within ancestry (%)",
                     y = Percent2,
-                    label = ifelse(is.nan(Percent2), paste0(Count, "\n(0%)"), paste0(sprintf("%.1f", Percent2), "%"))) %>%
-          mutate(panel = factor(panel, levels = c("Number of variants", "Exclusive within ancestry (%)")))
-
-Fig2B <- ggplot() +
-         geom_col(data = Fig2ba,
+                    label = pct_label(Percent2)) %>%
+          mutate(panel = factor(panel,
+                                levels = c("Number of variants",
+                                           "Exclusive within ancestry (%)")))
+Fig3B <- ggplot() +
+         geom_col(data = Fig3ba,
                   aes(x = Ancestry, y = y),
                   width = 0.9, fill = "grey80", colour = "black") +
-         geom_text(data = Fig2ba,
+         geom_text(data = Fig3ba,
                    aes(x = Ancestry, y = y, label = label),
                    vjust = -0.5, size = 3.5, family = "Arial") +
-         geom_segment(data = Fig2bb,
+         geom_segment(data = Fig3bb,
                       aes(x = Ancestry, xend = Ancestry, y = 0, yend = y),
                       linewidth = 1, color = "black") +
-         geom_point(data = Fig2bb,
+         geom_point(data = Fig3bb,
                     aes(x = Ancestry, y = y),
                     size = 3.5, shape = 21, fill = "black", color = "black", stroke = 0.8) +
-         geom_text(data = Fig2bb,
+         geom_text(data = Fig3bb,
                    aes(x = Ancestry, y = y, label = label),
                    vjust = -0.8, size = 3.5, family = "Arial") +
          facet_grid2(panel ~ ., scales = "free_y", switch = "y",
@@ -653,18 +944,18 @@ Fig2B <- ggplot() +
                strip.background = element_blank()) +
          force_panelsizes(rows = unit(c(3, 1), "null"), respect = FALSE)
 
-Fig2B
+Fig3B
 
-rm(Total, Total2, Fig2ba, Fig2bb)
+rm(Total, Total2, Fig3ba, Fig3bb)
 ```
 
 ## Panel C: Spread of gnomADv4.1 release variants passing quality check across databases
-```{r Fig2C}
+```{r Fig3C}
 CI <- ClinVar %>% 
       mutate(Database = "ClinVar")%>%
       dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, ClinVar, Stars, Database)
 
-Fig2c <- Data %>% 
+Fig3c <- Data %>% 
          filter(Region == "Joint" & Quality == "Passed" & Version == "gnomADv4.1") %>%
          dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, ClinVar, Stars) %>%
          mutate(Database = ifelse(!is.na(ClinVar), "gnomAD + ClinVar",       
@@ -678,9 +969,9 @@ Fig2c <- Data %>%
                 Database = factor(Database, levels = c("ClinVar", "gnomAD", "gnomAD + ClinVar"))) %>%
          ungroup()
 
-Fig2c
+Fig3c
 
-Fig2C <- Fig2c %>%
+Fig3C <- Fig3c %>%
          ggplot(aes(x = Database, y = Count)) +
          geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), 
                   width = 0.9,
@@ -718,218 +1009,59 @@ Fig2C <- Fig2c %>%
                strip.placement = "inside",
                strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
 
-Fig2C
+Fig3C
 
 rm(ClinVar, CI)
 ```
 
-## Compile Figure 2
+## Compile Figure 3
 ```{r Fig2}
-Fig2A <- Fig2A + 
-         theme(plot.margin = margin(1, 1, 10, 1)) + 
+Fig3A <- Fig3A + 
+         theme(plot.margin = margin(1, 1, 35, 1)) + 
          coord_cartesian(clip = "off") + 
          scale_y_continuous(expand = expansion(mult = c(0, 0.6)))
 
-Fig2B <- Fig2B +
-         theme(plot.margin = margin(10, 1, 10, 1)) + 
+Fig3B <- Fig3B +
+         theme(plot.margin = margin(10, 1, 35, 1)) + 
          coord_cartesian(clip = "off") + 
          scale_y_continuous(expand = expansion(mult = c(0, 0.6)))
 
-Fig2C <- Fig2C + 
-         theme(plot.margin = margin(10, 1, 2, 1), axis.text = element_text(vjust = 0)) +
+Fig3C <- Fig3C + 
+         theme(plot.margin = margin(10, 1, 35, 1), axis.text = element_text(vjust = 0)) +
          coord_cartesian(clip = "off") + 
          scale_y_continuous(expand = expansion(mult = c(0, 0.5)))
 
-Target <- Reduce(function(a, b) unit.pmax(a, b), 
-                 list(LeftGutter(Fig2A), LeftGutter(Fig2B), LeftGutter(Fig2C)))
+Target <- Reduce(function(a, b) unit.pmax(a, b),
+                 list(LeftGutter(Fig3A),
+                      LeftGutter(Fig3B),   
+                      LeftGutter(Fig3C)))
 
-Fig2 <- (LeftPadding(Fig2A, Target) /
-         LeftPadding(Fig2B, Target) /
-         LeftPadding(Fig2C, Target)) +
-         plot_layout(ncol = 1, heights = c(1, 1.5, 1), guides = "collect") +
-         plot_annotation(tag_levels = list(c("A","B","C")),
-                         theme = theme(plot.tag = element_text(family = "Arial", face = "bold", size = 16),
-                                       plot.margin = margin(1, 2, 1, 2)))
-
-Fig2
-
-ggsave(filename = "Fig2.png",
-       plot = Fig2, units = "in", dpi = 300,
-       width = 8.77, height = 9.5)
-
-rm(LeftGutter, LeftPadding)
-```
-
-# Figure 3: Gene constraint score comparisons across gnomAD releases
-```{r Fig3}
-Fig3 <- read_xlsx("gnomad_gene_constraint_scores.xlsx") %>%
-        pivot_longer(cols = c("Synonymous z-score", "Missense z-score", "LOEUF"),
-                     names_to = "Type", values_to = "Score") %>%
-        mutate(Version = ifelse(Version == "GnomADv4.1", "gnomADv4.1",
-                         ifelse(Version == "GnomADv2.0", "gnomADv2.1.1", NA)))
-
-Fig3
-
-Fig3A <- Fig3 %>%
-         filter(Type == "Synonymous z-score") %>%
-         ggplot(aes(x = Gene, y = Score, fill = Version)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
-         scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
-                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
-                   family = "Arial") +
-         guides(fill = guide_legend(nrow = 1,
-                                    title.position = "top",
-                                    title.hjust = 0.5)) +
-         labs(fill = "gnomAD release",
-              x = "Gene",
-              y = "Synonymous z-score") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
-                                         size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text  = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(4, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
-
-Fig3A
-
-Fig3B <- Fig3 %>%
-         filter(Type == "Missense z-score") %>%
-         ggplot(aes(x = Gene, y = Score, fill = Version)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
-         scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
-                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
-                   family = "Arial") +
-         guides(fill = guide_legend(nrow = 1,
-                                    title.position = "top",
-                                    title.hjust = 0.5)) +
-         labs(fill = "gnomAD release",
-              x = "Gene",
-              y = "Missense z-score") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
-                                         size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text  = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(4, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
-
-Fig3B
-
-Fig3C <- Fig3 %>%
-         filter(Type == "LOEUF") %>%
-         ggplot(aes(x = Gene, y = Score, fill = Version)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
-         scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
-                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
-                   family = "Arial") +
-         guides(fill = guide_legend(nrow = 1,
-                                    title.position = "top",
-                                    title.hjust = 0.5)) +
-         labs(fill = "gnomAD release",
-              x = "Gene",
-              y = "LOEUF score") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
-                                         size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text  = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(4, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
-
-Fig3C
-
-Fig3A <- Fig3A +          
-         theme(plot.margin = margin(1, 1, 10, 2)) + 
-         coord_cartesian(clip = "off")
-
-Fig3B <- Fig3B + 
-         theme(plot.margin = margin(10, 1, 10, 2)) + 
-         coord_cartesian(clip = "off")
-
-Fig3C <- Fig3C + 
-         theme(plot.margin = margin(10, 1, 2, 2)) + 
-         coord_cartesian(clip = "off")
-
-Fig3 <- (Fig3C / Fig3B / Fig3A) +
-         plot_layout(ncol = 1, guides = "collect", heights = c(1, 1, 1)) +
-         plot_annotation(tag_levels = list(c("A", "B", "C")),
-                         tag_prefix = "",
-                         tag_suffix = "",
-                         theme = theme(plot.tag = element_text(family = "Arial",
-                                                               face = "bold", 
-                                                               size = 16))) &
-         theme(legend.position = "bottom", 
-               legend.direction = "horizontal",
-               legend.box = "horizontal",
-               legend.margin = margin(t = 2),
-               legend.title = element_text(hjust = 0.5),
-               legend.text = element_text(hjust = 0.5))
-
-paste0("Positive values reflect increased intolerance to variation, whereas negative values reflect increased tolerance.")
+Fig3 <- (LeftPadding(Fig3A, Target) /
+         LeftPadding(Fig3B, Target) /
+         LeftPadding(Fig3C, Target)) +
+        plot_layout(ncol = 1,
+                    heights = c(1, 1.5, 1),
+                    guides = "collect") +
+        plot_annotation(tag_levels = list(c("A", "B", "C")),
+                        theme = theme(plot.tag = element_text(family = "Arial",
+                                                              face = "bold",
+                                                              size = 16,
+                                                              hjust = 0.5,
+                                                              vjust = 1),
+                                      plot.tag.location = "plot",
+                                      plot.tag.position = c(0.12, 1),
+                                      plot.margin = margin(1, 2, 1, 2)))
 
 Fig3
 
 ggsave(filename = "Fig3.png",
-       plot = Fig3, units = "in", dpi = 300,
-       width = 8.77, height = 9.5)
+       plot = Fig3,
+       units = "in",
+       dpi = 300,
+       width = 8.77,
+       height = 9.5)
+
+rm(LeftGutter, LeftPadding)
 ```
 
 # Figure 4 
@@ -1114,57 +1246,135 @@ Data2 <- Data %>%
 
 ## Panel A: Overview of BA1, BS1, BS2, BS2_Supporting and PM2_Supporting evidence across variants passing quality assessment per gnomAD release
 ```{r Fig4A}
-Fig4a <- bind_rows(Data1 %>% mutate(Version = "gnomADv4.1"),
-                   Data2 %>% mutate(Version = "gnomADv2.1.1")) %>%
-         dplyr::select(ID, Version, BA1, BS1, BS2, BS2_Supporting, PM2_Supporting) %>%
-         pivot_longer(cols = c(BA1, BS1, BS2, BS2_Supporting, PM2_Supporting),
-                      names_to = "Category",
-                      values_to = "Response") %>%
-         group_by(Category, Version) %>%
-         summarise(Total = n(),
-                   Count = sum(Response == "Satisfied"), .groups = "drop") %>%
-         mutate(Percent = round(Count / Total * 100, 1),
-                Category = factor(Category, levels = c("BA1", "BS1", "BS2", "BS2_Supporting", "PM2_Supporting")))
+criteria <- c("BA1", "BS1", "BS2", "BS2_Supporting", "PM2_Supporting")
+headers <- c("gnomADv2.1.1" = "gnomAD v2.1.1",
+             "gnomADv4.1"   = "gnomAD v4.1")
+release_levels <- names(headers)
 
-Fig4a
+pct_label4 <- function(n, total) {p <- round(100 * n / total, 1)
+                                  ifelse(n == 0, "0%",
+                                         ifelse(p == 0, "<0.1%",
+                                                ifelse(p == 100, "100%", sprintf("%.1f%%", p))))}
 
-Fig4A <- ggplot(Fig4a, aes(x = Category, y = Count)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), 
-                  width = 0.9,
-                  fill = "grey80",  
-                  colour = "black") +
-         facet_wrap(~ Version, strip.position = "top", scales = "free_x") +
-         scale_x_discrete(expand = c(0, 0)) +
-         geom_text(aes(label = ifelse(is.nan(Percent), paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")), group = Version), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   vjust = -0.5, 
-                   size = 3.5, 
-                   family = "Arial") +
+raw_presence <- Data %>%
+                dplyr::mutate(Version = dplyr::case_when(as.character(Version) %in% c("GnomADv2.0", "gnomADv2.1.1") ~ "gnomADv2.1.1",
+                                                         as.character(Version) %in% c("GnomADv4.1", "gnomADv4.1") ~ "gnomADv4.1",
+                                                         TRUE ~ NA_character_),
+                              Key = paste(Chromosome, Start, Ref, Alt, sep = "_")) %>%
+                dplyr::filter((Version == "gnomADv2.1.1" & Region %in% c("Exome", "Genome")) | (Version == "gnomADv4.1" & Region == "Joint")) %>%
+                dplyr::distinct(Key, Version) %>%
+                dplyr::group_by(Key) %>%
+                dplyr::summarise(present_v2 = any(Version == "gnomADv2.1.1"),
+                                 present_v4 = any(Version == "gnomADv4.1"),
+                                 .groups = "drop") %>%
+                dplyr::mutate(Membership = if_else(present_v2 & present_v4,
+                                                   "Common to both releases", "Unique to one release")) %>%
+                dplyr::select(Key, Membership)
 
-         labs(y = "Number of variants",
-              x = "ACMG/AMP variant classification criteria") +
-         theme_minimal(base_family = "Arial", base_size = 14) +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
-                                         size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text.y  = element_text(size = 11.8),
-               axis.text.x  = element_text(size = 10.5),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(1.5, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
+Fig4_source <- dplyr::bind_rows(Data2 %>% dplyr::mutate(Version = "gnomADv2.1.1"),
+                                Data1 %>% dplyr::mutate(Version = "gnomADv4.1")) %>%
+               dplyr::mutate(Key = paste(Chromosome, Start, Ref, Alt, sep = "_"),
+                             Version = factor(Version, levels = release_levels)) %>%
+               dplyr::left_join(raw_presence, by = "Key") %>%
+               dplyr::mutate(Membership = factor(Membership, levels = c("Common to both releases", "Unique to one release")))
+
+Fig4a <- Fig4_source %>%
+         dplyr::select(Version, Membership, dplyr::all_of(criteria)) %>%
+         tidyr::pivot_longer(cols = dplyr::all_of(criteria),
+                             names_to = "Criterion", values_to = "Response") %>%
+         dplyr::group_by(Version, Criterion, Membership) %>%
+         dplyr::summarise(Count = sum(Response == "Satisfied", na.rm = TRUE),
+                          .groups = "drop") %>%
+         dplyr::mutate(Criterion = factor(Criterion, levels = criteria),
+                       X = match(as.character(Criterion), criteria)) %>%
+         dplyr::arrange(Version, X, Membership) %>%
+         dplyr::group_by(Version, Criterion) %>%
+         dplyr::mutate(StackTop = cumsum(Count),
+                       StackBottom = StackTop - Count) %>%
+         dplyr::ungroup()
+
+Fig4a_labels <- Fig4a %>%
+                dplyr::group_by(Version, Criterion, X) %>%
+                dplyr::summarise(Total = sum(Count),
+                                 Common = sum(Count[Membership == "Common to both releases"]),
+                                 Unique = sum(Count[Membership == "Unique to one release"]),
+                                 .groups = "drop") %>%
+                dplyr::mutate(LabelY = pmax(Total + 120, 320))
+
+
+Fig4a_labels <- Fig4a %>%
+                dplyr::group_by(Version, Criterion, X) %>%
+                dplyr::summarise(Total = sum(Count),
+                                 Common = sum(Count[Membership == "Common to both releases"]),
+                                 Unique = sum(Count[Membership == "Unique to one release"]),
+                                 .groups = "drop") %>%
+                dplyr::mutate(N_release = if_else(as.character(Version) == "gnomADv2.1.1",
+                                                  2185L, 5021L),
+                              TotalLabel = paste0("Total:\n",
+                                                  scales::comma(Total),
+                                                  " (", pct_label4(Total, N_release), ")"),
+                              CountY = pmax(Total + 150, 310),
+                              TotalY = CountY + 610)
+
+Fig4A <- ggplot2::ggplot() +
+         ggplot2::geom_rect(data = Fig4a %>% dplyr::filter(Count > 0),
+                            ggplot2::aes(xmin = X - 0.34, xmax = X + 0.34,
+                                         ymin = StackBottom, ymax = StackTop, fill = Membership),
+                            colour = "grey25", linewidth = 0.2) +
+         geom_text(data = Fig4a_labels,
+                   aes(x = X - 0.10,
+                       y = CountY,
+                       label = scales::comma(Common)),
+                   family = "Arial",
+                   fontface = "bold",
+                   size = 2.8,
+                   colour = "#176B55",
+                   hjust = 1) +
+         geom_text(data = Fig4a_labels,
+                   aes(x = X + 0.10,
+                       y = CountY,
+                       label = scales::comma(Unique)),
+                   family = "Arial",
+                   fontface = "bold",
+                   size = 2.8,
+                   colour = "#71417F",
+                   hjust = 0) +
+          geom_text(data = Fig4a_labels,
+                    aes(x = X,
+                        y = TotalY,
+                        label = TotalLabel),
+                    family = "Arial",
+                    size = 2.7,
+                    colour = "grey20",
+                    lineheight = 0.95,
+                    hjust = 0.5) +
+          ggplot2::facet_wrap(~ Version, nrow = 1,
+                              labeller = ggplot2::as_labeller(headers)) +
+          ggplot2::scale_fill_manual(name = "Variant membership",
+                                     values = c("Common to both releases" = "#6BCBA5",
+                                                "Unique to one release" = "#80538E"),
+                                     drop = FALSE) +
+          ggplot2::guides(fill = ggplot2::guide_legend(nrow = 1, title.position = "top", title.hjust = 0.5)) +
+          ggplot2::scale_x_continuous(breaks = seq_along(criteria),
+                                      labels = gsub("_", "\n", criteria),
+                                      limits = c(0.42, 5.58),
+                                      expand = ggplot2::expansion(mult = 0)) +
+          scale_y_continuous(limits = c(0, 5900),
+                             breaks = seq(0, 5000, 1000),
+                             labels = scales::label_comma(),
+                             expand = expansion(mult = 0)) +
+          ggplot2::labs(x = "ACMG/AMP population criteria", y = "Number of variants") +
+          ggplot2::theme_minimal(base_family = "Arial", base_size = 12) +
+          ggplot2::theme(strip.text = ggplot2::element_text(face = "bold", size = 11.5),
+                         strip.background = ggplot2::element_rect(fill = "#F6F6F5", colour = "white"),
+                         axis.text.x = ggplot2::element_text(size = 9.2),
+                         axis.title = ggplot2::element_text(face = "bold"),
+                         legend.position = "bottom",
+                         legend.title = ggplot2::element_text(face = "bold"),
+                         panel.grid.major.x = ggplot2::element_blank(),
+                         panel.grid.major.y = ggplot2::element_line(linetype = "dotted", colour = "grey80"),
+                         panel.grid.minor = ggplot2::element_blank(),
+                         plot.margin = ggplot2::margin(14, 6, 12, 14))
 
 Fig4A
 ```
@@ -1304,38 +1514,38 @@ Fig4C
 
 ## Compile Figure 4
 ```{r Fig4}
-Fig4A <- Fig4A + 
-         theme(plot.margin = margin(1, 1, 10, 2)) + 
-         coord_cartesian(clip = "off") +
-         scale_y_continuous(expand = expansion(mult = c(0, 0.5))) +
-         scale_x_discrete(expand = expansion(mult = c(0, 0.3))) + 
-         scale_x_discrete(labels = function(x) gsub("_", "\n", x))
+Fig4C <- Fig4C +
+         ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.20))) 
 
+# Panel B
 Fig4B <- Fig4B +
-         theme(plot.margin = margin(10, 1, 10, 2)) + 
          coord_cartesian(clip = "off") +
-         scale_y_continuous(expand = expansion(mult = c(0, 0.5))) +
-         scale_x_discrete(expand = expansion(mult = c(0, 0.3)))
+         scale_y_continuous(expand = expansion(mult = c(0, 0.75)))
 
-Fig4C <- Fig4C + 
-         theme(plot.margin = margin(10, 1, 2, 2)) + 
+# Panel C
+Fig4C <- Fig4C +
          coord_cartesian(clip = "off") +
-         scale_y_continuous(expand = expansion(mult = c(0, 0.5)))
+         scale_y_continuous(expand = expansion(mult = c(0, 0.50)))
+
 
 Fig4 <- (Fig4A / Fig4B / Fig4C) +
-         plot_layout(ncol = 1, guides = "collect", heights = c(1, 1, 1)) +
+         plot_layout(ncol = 1, heights = c(1.9, 1, 1.2)) +
          plot_annotation(tag_levels = list(c("A","B","C")),
                          theme = theme(plot.tag = element_text(family = "Arial", 
-                                                               face = "bold", 
-                                                               size = 16),
+                                                               face = "plain", 
+                                                               size = 16,
+                                                               hjust = 0,
+                                                               vjust = -1),
                                        plot.margin = margin(2.5, 2, 2.5, 2),
+              plot.tag.location = "margin",
+              plot.tag.position = "topleft",
                                        legend.position = "bottom"))
 
 Fig4
 
 ggsave(filename = "Fig4.png",
        plot = Fig4, units = "in", dpi = 300,
-       width = 8.77, height = 9.5)
+       width = 8.77, height = 10)
 ```
 
 # Figure 5
@@ -1426,46 +1636,60 @@ Fig5b <- Data1 %>%
 
 Fig5b
 
-Fig5B <- Fig5b %>%
-         ggplot(aes(x = Category, y = Count, fill = ClinVar)) +
-         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), 
-                  width = 0.9) +
-         scale_x_discrete(expand = c(0, 0)) +
-         scale_fill_manual(values = alpha(c("Benign/Likely benign" = "#35B779",
-                                            "Uncertain significance" = "#2A788E", 
-                                            "Pathogenic/Likely pathogenic" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Percent == 0, paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")), group = ClinVar), 
-                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   vjust = -0.5,
-                   size = 3.5,
-                   family = "Arial") +
-         guides(fill = guide_legend(nrow = 1,
-                                    title.position = "top",
-                                    title.hjust = 0.5)) +
-         labs(fill = "ClinVar variant classification",
-              x = "ACMG/AMP variant classification criteria",
-              y = "Number of variants") +
-         theme_minimal(base_family = "Arial") +
-         theme(text = element_text(color = "black"),
-               legend.position = "bottom",
-               plot.title = element_text(hjust = 0.5,
-                                         face  = "bold",
-                                         size  = 12),
-               plot.caption = element_text(size  = 11.8,
-                                           margin = margin(t = 6)),
-               strip.text = element_text(face = "bold",
-                                         size = 11.8),
-               legend.text  = element_text(size = 11.8),
-               legend.title = element_text(face = "bold", size = 11.8),
-               axis.text  = element_text(size = 11.8),
-               axis.title = element_text(face = "bold", size = 11.8),
-               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
-               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
-               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
-               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
-               panel.spacing = unit(1.5, "lines"),
-               strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white"))
+# Consistent color scheme
+clinvar_colors <- alpha(c("Benign/Likely benign" = "#35B779",
+                          "Uncertain significance" = "#2A788E",
+                          "Pathogenic/Likely pathogenic" = "#440154"), 0.7)
+
+dodge <- position_dodge2(width = 0.9,
+                         padding = 0.1,
+                         preserve = "single")
+
+# Function for both panels
+make_panel <- function(data, panel_title) {ggplot(data, aes(x = Category, y = Count, fill = ClinVar)) +
+                                           geom_col(position = dodge,
+                                                    width = 0.9) +
+                                           geom_text(aes(label = paste0(Count, "\n(", sprintf("%.1f", Percent), "%)"),
+                                                         group = ClinVar),
+                                                     position = dodge,
+                                                     vjust = -0.4,
+                                                     size = 3.5,
+                                                     family = "Arial") +
+                                           scale_x_discrete(expand = expansion(add = 0.4)) +
+                                           scale_y_continuous(expand = expansion(mult = c(0, 0.6))) +
+                                           scale_fill_manual(values = clinvar_colors, drop = FALSE) +
+                                           labs(title = NULL,
+                                                x = panel_title,
+                                                y = "Number of variants",
+                                                fill = "ClinVar variant classification") +
+                                           guides(fill = guide_legend(nrow = 1,
+                                                                      title.position = "top",
+                                                                      title.hjust = 0.5)) +
+                                           theme_minimal(base_family = "Arial") +
+                                           theme(text = element_text(color = "black"),
+                                                 plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                                                 legend.position = "bottom",
+                                                 legend.text = element_text(size = 11.8),
+                                                 legend.title = element_text(face = "bold", size = 11.8),
+                                                 axis.text = element_text(size = 11),
+                                                 axis.title = element_text(face = "bold", size = 11.8),
+                                                 axis.text.x = element_text(angle = 0, hjust = 0.5),
+                                                 panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+                                                 panel.grid.minor = element_line(linetype = "dotted", color = "grey90"))}
+
+p1 <- Fig5b %>%
+      filter(Category != "PM2_Supporting") %>%
+      make_panel("Criteria supporting \na benign classification")
+
+p2 <- Fig5b %>%
+      filter(Category == "PM2_Supporting") %>%
+      make_panel("Criteria supporting \na pathogenic classification")
+
+Fig5B <- (p1 | p2) +
+         plot_layout(widths = c(4, 1.7),
+                     guides = "collect") +
+         plot_annotation(caption = "Note: Panels use different y-axis scales.") &
+         theme(legend.position = "bottom")
 
 Fig5B
 ```
@@ -1495,6 +1719,7 @@ Fig5C <- Fig5c %>%
          geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), 
                   width = 0.9) +
          scale_x_discrete(expand = c(0, 0)) +
+         scale_y_continuous(expand = expansion(mult = c(0, 0.6))) +
          scale_fill_manual(values = alpha(c("None" = "#35B779",
                                             "*" = "#2A788E", 
                                             "**" = "#440154"), 0.7)) +
@@ -1536,36 +1761,229 @@ Fig5C
 
 ## Compile Figure 5
 ```{r Fig5}
-Fig5A <- Fig5A + 
-         theme(plot.margin = margin(1, 1, 10, 2)) +
-         coord_cartesian(clip = "off")
+Fig5A_final <- Fig5A +
+               theme(plot.margin = margin(15, 5, 15, 5))
 
-Fig5B <- Fig5B +
-         theme(plot.margin = margin(10, 1, 2, 2)) + 
-         coord_cartesian(clip = "off") + 
-         scale_y_continuous(expand = expansion(mult = c(0, 0.5)))
+Fig5B_final <- Fig5B +
+               theme(plot.margin = margin(5, 5, 5, 5))
 
-Fig5C <- Fig5C + 
-         theme(plot.margin = margin(20, 1, 2, 2)) + 
-         coord_cartesian(clip = "off") + 
-         scale_y_continuous(expand = expansion(mult = c(0, 0.5)))
+Fig5C_final <- Fig5C +
+               theme(plot.margin = margin(15, 5, 15, 5))
 
-Fig5 <- (Fig5A / Fig5B / Fig5C) +
-         plot_layout(ncol = 1, heights = c(1, 1, 1)) +
-         plot_annotation(tag_levels = list(c("A","B","C")),
-                         theme = theme(plot.tag = element_text(family = "Arial", 
-                                                               face = "bold", 
-                                                               size = 16),
-                                       plot.margin = margin(2.5, 2, 2.5, 2),
-                                       legend.position = "bottom"))
+
+Fig5 <- (Fig5A_final /
+         Fig5B_final /
+         Fig5C_final) +
+        plot_layout(ncol = 1,
+                    heights = c(1, 1, 1)) +
+        plot_annotation(tag_levels = list(c("A", "B", "", "C"))) &
+        theme(plot.tag = element_text(family = "Arial",
+                                      face = "plain",
+                                      size = 16,
+                                      hjust = 0,
+                                      vjust = 1),
+              plot.tag.location = "margin",
+              plot.tag.position = "topleft")
 
 Fig5
 
-ggsave(filename = "Fig5.png",
-       plot = Fig5, units = "in", dpi = 300,
-       width = 8.77, height = 9.5)
+ggsave(filename = paste0("Fig5.png"),
+       plot = Fig5,
+       units = "in",
+       dpi = 300,
+       width = 10.5,
+       height = 10.5)
+```
 
-rm(Data2)
+# Figure 6: Gene constraint score comparisons across gnomAD releases
+```{r Fig6}
+Fig6 <- read_xlsx("gnomad_gene_constraint_scores.xlsx") %>%
+        pivot_longer(cols = c("Synonymous z-score", "Missense z-score", "LOEUF"),
+                     names_to = "Type", values_to = "Score") %>%
+        mutate(Version = ifelse(Version == "GnomADv4.1", "gnomADv4.1",
+                         ifelse(Version == "GnomADv2.0", "gnomADv2.1.1", NA)))
+
+Fig6
+
+Fig6A <- Fig6 %>%
+         filter(Type == "Synonymous z-score") %>%
+         ggplot(aes(x = Gene, y = Score, fill = Version)) +
+         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
+         scale_x_discrete(expand = c(0, 0)) +
+         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
+                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
+         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
+                   size = 3.5, 
+                   family = "Arial") +
+         guides(fill = guide_legend(nrow = 1,
+                                    title.position = "top",
+                                    title.hjust = 0.5)) +
+         labs(fill = "gnomAD release",
+              x = "Gene",
+              y = "Synonymous z-score") +
+         theme_minimal(base_family = "Arial", base_size = 14) +
+         theme(text = element_text(color = "black"),
+               legend.position = "bottom",
+               plot.title = element_text(hjust = 0.5,
+                                         face  = "bold",
+                                         size  = 12),
+               plot.caption = element_text(size  = 11.8,
+                                           margin = margin(t = 6)),
+               strip.text = element_text(face = "bold",
+                                         size = 11.8),
+               legend.text  = element_text(size = 11.8),
+               legend.title = element_text(face = "bold", size = 11.8),
+               axis.text  = element_text(size = 11.8),
+               axis.title = element_text(face = "bold", size = 11.8),
+               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
+               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
+               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
+               panel.spacing = unit(4, "lines"),
+               strip.placement = "inside",
+               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
+
+Fig6A
+
+Fig6B <- Fig6 %>%
+         filter(Type == "Missense z-score") %>%
+         ggplot(aes(x = Gene, y = Score, fill = Version)) +
+         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
+         scale_x_discrete(expand = c(0, 0)) +
+         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
+                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
+         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
+                   size = 3.5, 
+                   family = "Arial") +
+         guides(fill = guide_legend(nrow = 1,
+                                    title.position = "top",
+                                    title.hjust = 0.5)) +
+         labs(fill = "gnomAD release",
+              x = "Gene",
+              y = "Missense z-score") +
+         theme_minimal(base_family = "Arial", base_size = 14) +
+         theme(text = element_text(color = "black"),
+               legend.position = "bottom",
+               plot.title = element_text(hjust = 0.5,
+                                         face  = "bold",
+                                         size  = 12),
+               plot.caption = element_text(size  = 11.8,
+                                           margin = margin(t = 6)),
+               strip.text = element_text(face = "bold",
+                                         size = 11.8),
+               legend.text  = element_text(size = 11.8),
+               legend.title = element_text(face = "bold", size = 11.8),
+               axis.text  = element_text(size = 11.8),
+               axis.title = element_text(face = "bold", size = 11.8),
+               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
+               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
+               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
+               panel.spacing = unit(4, "lines"),
+               strip.placement = "inside",
+               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
+
+Fig6B
+
+Fig6C <- Fig6 %>%
+         filter(Type == "LOEUF") %>%
+         ggplot(aes(x = Gene, y = Score, fill = Version)) +
+         geom_col(position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"), width = 0.9) +
+         scale_x_discrete(expand = c(0, 0)) +
+         scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
+                                            "gnomADv2.1.1" = "#440154"), 0.7)) +
+         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+                   position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
+                   size = 3.5, 
+                   family = "Arial") +
+         guides(fill = guide_legend(nrow = 1,
+                                    title.position = "top",
+                                    title.hjust = 0.5)) +
+         labs(fill = "gnomAD release",
+              x = "Gene",
+              y = "LOEUF score") +
+         theme_minimal(base_family = "Arial", base_size = 14) +
+         theme(text = element_text(color = "black"),
+               legend.position = "bottom",
+               plot.title = element_text(hjust = 0.5,
+                                         face  = "bold",
+                                         size  = 12),
+               plot.caption = element_text(size  = 11.8,
+                                           margin = margin(t = 6)),
+               strip.text = element_text(face = "bold",
+                                         size = 11.8),
+               legend.text  = element_text(size = 11.8),
+               legend.title = element_text(face = "bold", size = 11.8),
+               axis.text  = element_text(size = 11.8),
+               axis.title = element_text(face = "bold", size = 11.8),
+               axis.title.x = element_text(margin = margin(t = 10), hjust = 0.5),
+               axis.title.y = element_text(margin = margin(r = 10), hjust = 0.5),
+               panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+               panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
+               panel.spacing = unit(4, "lines"),
+               strip.placement = "inside",
+               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) +
+         geom_hline(yintercept = 0.45,
+                    linetype = "dashed",
+                    color = "#C0392B",
+                    linewidth = 0.7) +
+         annotate("text",
+                  x = Inf,
+                  y = 0.45,
+                  label = "0.45",
+                  hjust = -0.15,
+                  vjust = 0.5,
+                  size = 3.5,
+                  family = "Arial",
+                  color = "#C0392B")
+
+Fig6C
+
+Fig6A <- Fig6A +
+         theme(plot.margin = margin(10, 50, 20, 5)) +
+         coord_cartesian(clip = "off")
+
+Fig6B <- Fig6B +
+         theme(plot.margin = margin(10, 50, 20, 5)) +
+         coord_cartesian(clip = "off")
+
+Fig6C <- Fig6C +
+         theme(plot.margin = margin(10, 50, 20, 5)) +
+         coord_cartesian(clip = "off")
+
+Fig6 <- (Fig6C +
+         Fig6B +
+         Fig6A +
+         guide_area() +
+         plot_layout(ncol = 1,
+                     heights = c(1, 1, 1, 0.18),
+                     guides = "collect") +
+         plot_annotation(tag_levels = list(c("A", "B", "C")),
+                         theme = theme(plot.tag = element_text(family = "Arial",
+                                                               face = "plain",
+                                                               size = 16,
+                                                               hjust = 0),
+                                       plot.tag.location = "margin",
+                                       plot.tag.position = "topleft",
+                                       plot.margin = margin(5, 5, 5, 5)))) &
+         theme(legend.position = "bottom",
+               legend.justification = "center",
+               legend.direction = "horizontal",
+               legend.box = "vertical")
+
+Fig6
+
+ggsave(filename = "Fig6.png",
+       plot = Fig6,
+       units = "in",
+       dpi = 300,
+       width = 8.77,
+       height = 9.5)
 ```
 
 # Supplementary Figure 1: Distribution of gnomADv4.1 release variants failing/pasing quality assessment across loci
@@ -2216,4 +2634,473 @@ Conflict <- Data1 %>%
 Conflict
 ```
 
+# Variants passing BA1 with specification of genetic ancestries in which BA1 satisfied
+```{r ba1 table}
+DataBA1 <- Data %>% 
+           filter(Region == "Joint" & Version == "gnomADv4.1" & Quality == "Passed") %>%
+           rowwise() %>%
+           mutate(FAF95_MAX = max(c(FAF95_AFR, 
+                                    FAF95_AMR, 
+                                    FAF95_EAS, 
+                                    FAF95_NFE, 
+                                    FAF95_SAS), na.rm = TRUE)) %>%
+           mutate(FAF95_MAXETH = {Index <- which(c(FAF95_AFR, 
+                                                   FAF95_AMR, 
+                                                   FAF95_EAS, 
+                                                   FAF95_NFE, 
+                                                   FAF95_SAS) == max(c(FAF95_AFR, 
+                                                                       FAF95_AMR,
+                                                                       FAF95_EAS, 
+                                                                       FAF95_NFE, 
+                                                                       FAF95_SAS), na.rm = TRUE))
+         
+                                  if (length(Index) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index]} 
+           
+                                  # In cases of tied max FAF95, report FAF95 with greatest variant count
+                                  else {Index2 <- Index[which(c(Allele.Count_AFR,
+                                                                Allele.Count_AMR, 
+                                                                Allele.Count_EAS, 
+                                                                Allele.Count_NFE, 
+                                                                Allele.Count_SAS)[Index] == max(c(Allele.Count_AFR,
+                                                                                                  Allele.Count_AMR,
+                                                                                                  Allele.Count_EAS,
+                                                                                                  Allele.Count_NFE, 
+                                                                                                  Allele.Count_SAS)[Index], na.rm = TRUE))]
+                                  
+                                        if (length(Index2) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index2]} 
+                                  
+                                        # In cases of tied max FAF95 & allele count, report FAF95 with greatest number of alleles tested
+                                        else {Max <- max(c(Allele.Total_AFR,
+                                                           Allele.Total_AMR, 
+                                                           Allele.Total_EAS, 
+                                                           Allele.Total_NFE, 
+                                                           Allele.Total_SAS)[Index2], na.rm = TRUE)
+                                        
+                                              c("AFR",
+                                                "AMR",
+                                                "EAS",
+                                                "NFE", 
+                                                "SAS")[Index2[which.max(c(Allele.Total_AFR, 
+                                                                          Allele.Total_AMR, 
+                                                                          Allele.Total_EAS,
+                                                                          Allele.Total_NFE,
+                                                                          Allele.Total_SAS)[Index2])]]}}}) %>%
+           ungroup() %>% 
+           mutate(Count = case_when(FAF95_MAXETH == "AFR" ~ Allele.Count_AFR,
+                                    FAF95_MAXETH == "AMR" ~ Allele.Count_AMR,
+                                    FAF95_MAXETH == "EAS" ~ Allele.Count_EAS,
+                                    FAF95_MAXETH == "NFE" ~ Allele.Count_NFE,
+                                    FAF95_MAXETH == "SAS" ~ Allele.Count_SAS,
+                                    FAF95_MAXETH == "MID" ~ Allele.Count_MID,
+                                    TRUE ~ NA_integer_),
+                  Total = case_when(FAF95_MAXETH == "AFR" ~ Allele.Total_AFR,
+                                    FAF95_MAXETH == "AMR" ~ Allele.Total_AMR,
+                                    FAF95_MAXETH == "EAS" ~ Allele.Total_EAS,
+                                    FAF95_MAXETH == "NFE" ~ Allele.Total_NFE,
+                                    FAF95_MAXETH == "SAS" ~ Allele.Total_SAS,
+                                    FAF95_MAXETH == "MID" ~ Allele.Total_MID,
+                                    TRUE ~ NA_integer_)) %>% 
+           dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, Allele.Frequency_ALL, Homozygotes_ALL, FAF95_MAX, Count, Total, ClinVar, Stars, 
+                         FAF95_ALL, FAF95_AFR, FAF95_AMR, FAF95_EAS, FAF95_NFE, FAF95_SAS,
+                         Allele.Total_AFR, Allele.Count_AFR, Allele.Total_AMR, Allele.Count_AMR, Allele.Total_EAS, 
+                         Allele.Count_EAS, Allele.Total_NFE, Allele.Count_NFE, Allele.Total_SAS, Allele.Count_SAS) %>%
+           distinct() %>%
+           mutate(BA1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.005 (0.5%) where allele total >= 2000 & allele count >= 5
+                  BS1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.001 (0.1%) where allele total >= 2000 & allele count >= 5 [Excludes BA1 range]
+                  PM2_Supporting = ifelse(Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"),        # ALL AF < 0.0001 (0.01%)
+                  BS2 = ifelse(Homozygotes_ALL >= 2, "Satisfied", "Not satisfied"),                            # 2 >= Homozygotes
+                  BS2_Supporting = ifelse(Homozygotes_ALL == 1, "Satisfied", "Not satisfied"),                 # 1 == Homozygote
+                  Conflict_BS2_PM2 = ifelse(Homozygotes_ALL >= 2 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"), # Meets both criteria [evidence for benign & pathogenic]
+                  Conflict_BS1_PM2 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied")) %>% # Meets both criteria [evidence for benign & pathogenic]
+           mutate(ClinVar = ifelse(ClinVar == "Uncertain_significance", "Uncertain significance", 
+                            ifelse(ClinVar == "Pathogenic/Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                            ifelse(ClinVar == "Likely_benign", "Benign/Likely benign", 
+                            ifelse(ClinVar == "Benign/Likely_benign", "Benign/Likely benign", 
+                            ifelse(ClinVar == "other", "Uncertain significance", 
+                            ifelse(ClinVar == "Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                            ifelse(ClinVar == "Benign", "Benign/Likely benign",
+                            ifelse(ClinVar == "Pathogenic|other", "Uncertain significance", 
+                            ifelse(ClinVar == "Conflicting_classifications_of_pathogenicity", "Uncertain significance",
+                            ifelse(ClinVar == "Pathogenic", "Pathogenic/Likely pathogenic", NA)))))))))))  %>%
+           mutate(ID = paste0("Chr",Chromosome,":", Start,"-", End)) %>%
+           mutate(BA1_AFR = ifelse(Allele.Total_AFR >= 2000 & Allele.Count_AFR >= 5 & FAF95_AFR >= 0.005, "AFR", "Not satisfied"),
+                 BA1_AMR = ifelse(Allele.Total_AMR >= 2000 & Allele.Count_AMR >= 5 & FAF95_AMR >= 0.005, "AMR", "Not satisfied"),
+                  BA1_EAS = ifelse(Allele.Total_EAS >= 2000 & Allele.Count_EAS >= 5 & FAF95_EAS >= 0.005, "EAS", "Not satisfied"),
+                  BA1_NFE = ifelse(Allele.Total_NFE >= 2000 & Allele.Count_NFE >= 5 & FAF95_NFE >= 0.005, "NFE", "Not satisfied"),
+                  BA1_SAS = ifelse(Allele.Total_SAS >= 2000 & Allele.Count_SAS >= 5 & FAF95_SAS >= 0.005, "SAS", "Not satisfied")) %>%
+           rowwise() %>%
+           mutate(BA1_Populations = {x <- c_across(BA1_AFR:BA1_SAS)
+                                     paste(x[!is.na(x) & x != "Not satisfied"], collapse = ", ")}) %>%
+           ungroup() %>%
+           dplyr::select(-c(BA1_AFR:BA1_SAS))  %>%
+           dplyr::select(Chromosome, Gene, ID, Ref, Alt, ClinVar, FAF95_MAX, BA1, BA1_Populations) %>% 
+           arrange(Chromosome, Gene) %>%
+    mutate(ClinVar = ifelse(is.na(ClinVar), "Not available", ClinVar),
+           across(everything(), ~ifelse(.x == "Satisfied", "Met", .x)),
+           across(everything(), ~ifelse(.x == "Not satisfied", "Not met", .x))) %>%
+           dplyr::select(-Chromosome) %>%
+           mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")"))
 
+DataBA12 <- Data %>% 
+            filter(Version == "gnomADv2.1.1" & Region != "Joint" & Quality == "Passed") %>%
+            rowwise() %>%
+            mutate(FAF95_MAX = max(c(FAF95_AFR, 
+                                     FAF95_AMR, 
+                                     FAF95_EAS, 
+                                     FAF95_NFE, 
+                                     FAF95_SAS), na.rm = TRUE)) %>%
+            mutate(FAF95_MAXETH = {Index <- which(c(FAF95_AFR, 
+                                                    FAF95_AMR, 
+                                                    FAF95_EAS, 
+                                                    FAF95_NFE, 
+                                                    FAF95_SAS) == max(c(FAF95_AFR, 
+                                                                        FAF95_AMR,
+                                                                        FAF95_EAS, 
+                                                                        FAF95_NFE, 
+                                                                        FAF95_SAS), na.rm = TRUE))
+         
+                                   if (length(Index) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index]} 
+         
+                                   # In cases of tied max FAF95, report FAF95 with greatest variant count
+                                   else {Index2 <- Index[which(c(Allele.Count_AFR,
+                                                                 Allele.Count_AMR, 
+                                                                 Allele.Count_EAS, 
+                                                                 Allele.Count_NFE, 
+                                                                 Allele.Count_SAS)[Index] == max(c(Allele.Count_AFR,
+                                                                                                   Allele.Count_AMR,
+                                                                                                   Allele.Count_EAS,
+                                                                                                   Allele.Count_NFE, 
+                                                                                                   Allele.Count_SAS)[Index], na.rm = TRUE))]
+                                
+                                          if (length(Index2) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index2]} 
+                                
+                                          # In cases of tied max FAF95 & allele count, report FAF95 with greatest number of alleles tested
+                                         else {Max <- max(c(Allele.Total_AFR,
+                                                            Allele.Total_AMR, 
+                                                            Allele.Total_EAS, 
+                                                            Allele.Total_NFE, 
+                                                            Allele.Total_SAS)[Index2], na.rm = TRUE)
+                                      
+                                               c("AFR",
+                                                 "AMR",
+                                                 "EAS",
+                                                 "NFE", 
+                                                 "SAS")[Index2[which.max(c(Allele.Total_AFR, 
+                                                                           Allele.Total_AMR, 
+                                                                           Allele.Total_EAS,
+                                                                           Allele.Total_NFE,
+                                                                           Allele.Total_SAS)[Index2])]]}}}) %>%
+            ungroup() %>%
+            mutate(Count = case_when(FAF95_MAXETH == "AFR" ~ Allele.Count_AFR,
+                                     FAF95_MAXETH == "AMR" ~ Allele.Count_AMR,
+                                     FAF95_MAXETH == "EAS" ~ Allele.Count_EAS,
+                                     FAF95_MAXETH == "NFE" ~ Allele.Count_NFE,
+                                     FAF95_MAXETH == "SAS" ~ Allele.Count_SAS,
+                                     TRUE ~ NA_integer_),
+                   Total = case_when(FAF95_MAXETH == "AFR" ~ Allele.Total_AFR,
+                                     FAF95_MAXETH == "AMR" ~ Allele.Total_AMR,
+                                     FAF95_MAXETH == "EAS" ~ Allele.Total_EAS,
+                                     FAF95_MAXETH == "NFE" ~ Allele.Total_NFE,
+                                     FAF95_MAXETH == "SAS" ~ Allele.Total_SAS,
+                                     TRUE ~ NA_integer_)) %>%
+            group_by(Chromosome, Gene, Start, Ref, Alt) %>%
+            mutate(Allele.Frequency_ALL = max(Allele.Frequency_ALL, na.rm = TRUE),
+                   Homozygotes_ALL = max(Homozygotes_ALL, na.rm = TRUE),
+                   FAF95_MAX = max(FAF95_MAX, na.rm = TRUE)) %>%
+            slice_max(order_by = FAF95_MAX, with_ties = FALSE) %>% 
+            ungroup() %>%
+            dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, Allele.Frequency_ALL, Homozygotes_ALL, FAF95_MAX, Count, Total, ClinVar, Stars, 
+                          FAF95_ALL, FAF95_AFR, FAF95_AMR, FAF95_EAS, FAF95_NFE, FAF95_SAS,
+                          Allele.Total_AFR, Allele.Count_AFR, Allele.Total_AMR, Allele.Count_AMR, Allele.Total_EAS, 
+                          Allele.Count_EAS, Allele.Total_NFE, Allele.Count_NFE, Allele.Total_SAS, Allele.Count_SAS) %>%
+            distinct() %>%
+            mutate(BA1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.005 (0.5%) where allele total >= 2000 & allele count >= 5
+                   BS1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.001 (0.1%) where allele total >= 2000 & allele count >= 5 [Exlcudes BA1 range]
+                   PM2_Supporting = ifelse(Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"),        # ALL AF < 0.0001 (0.01%)
+                   BS2 = ifelse(Homozygotes_ALL >= 2, "Satisfied", "Not satisfied"),                            # 2 >= Homozygotes
+                   BS2_Supporting = ifelse(Homozygotes_ALL == 1, "Satisfied", "Not satisfied"),                 # 1 == Homozygote
+                   Conflict_BS2_PM2 = ifelse(Homozygotes_ALL >= 2 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"), # Meets both criteria [evidence for benign & pathogenic]
+                   Conflict_BS1_PM2 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied")) %>%  # Meets both criteria [evidence for benign & pathogenic]
+            mutate(ClinVar = ifelse(ClinVar == "Uncertain_significance", "Uncertain significance", 
+                             ifelse(ClinVar == "Pathogenic/Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                             ifelse(ClinVar == "Likely_benign", "Benign/Likely benign", 
+                             ifelse(ClinVar == "Benign/Likely_benign", "Benign/Likely benign", 
+                             ifelse(ClinVar == "other", "Uncertain significance", 
+                             ifelse(ClinVar == "Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                             ifelse(ClinVar == "Benign", "Benign/Likely benign",
+                             ifelse(ClinVar == "Pathogenic|other", "Uncertain significance", 
+                             ifelse(ClinVar == "Conflicting_classifications_of_pathogenicity", "Uncertain significance",
+                             ifelse(ClinVar == "Pathogenic", "Pathogenic/Likely pathogenic", NA))))))))))) %>%
+            mutate(ID = paste0("Chr",Chromosome,":", Start,"-", End)) %>%
+            mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")")) %>%
+            mutate(BA1_AFR = ifelse(Allele.Total_AFR >= 2000 & Allele.Count_AFR >= 5 & FAF95_AFR >= 0.005, "AFR", "Not satisfied"),
+                   BA1_AMR = ifelse(Allele.Total_AMR >= 2000 & Allele.Count_AMR >= 5 & FAF95_AMR >= 0.005, "AMR", "Not satisfied"),
+                   BA1_EAS = ifelse(Allele.Total_EAS >= 2000 & Allele.Count_EAS >= 5 & FAF95_EAS >= 0.005, "EAS", "Not satisfied"),
+                   BA1_NFE = ifelse(Allele.Total_NFE >= 2000 & Allele.Count_NFE >= 5 & FAF95_NFE >= 0.005, "NFE", "Not satisfied"),
+                   BA1_SAS = ifelse(Allele.Total_SAS >= 2000 & Allele.Count_SAS >= 5 & FAF95_SAS >= 0.005, "SAS", "Not satisfied")) %>%
+            rowwise() %>%
+            mutate(BA1_Populations = {x <- c_across(BA1_AFR:BA1_SAS)
+                                     paste(x[!is.na(x) & x != "Not satisfied"], collapse = ", ")}) %>%
+            ungroup() %>%
+            dplyr::select(-c(BA1_AFR:BA1_SAS))  %>%
+            dplyr::select(Chromosome, Gene, ID, Ref, Alt, ClinVar, FAF95_MAX, BA1, BA1_Populations) %>% 
+            arrange(Chromosome, Gene) %>%
+     mutate(ClinVar = ifelse(is.na(ClinVar), "Not available", ClinVar),
+            across(everything(), ~ifelse(.x == "Satisfied", "Met", .x)),
+            across(everything(), ~ifelse(.x == "Not satisfied", "Not met", .x))) %>%
+            dplyr::select(-Chromosome) %>%
+            mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")"))
+
+BA1_Comparison <- full_join(DataBA1 %>%
+                            mutate(Present_v4 = TRUE) %>%
+                            dplyr::select(Gene, ID, ID2, Ref, Alt, ClinVar, BA1, FAF95_MAX, BA1_Populations, Present_v4),
+                            DataBA12 %>%
+                            mutate(Present_v2 = TRUE) %>%
+                            dplyr::select(Gene, ID, ID2, Ref, Alt, ClinVar, BA1, FAF95_MAX, BA1_Populations, Present_v2),
+                            by = c("Gene", "ID2"), suffix = c("_v4", "_v2")) %>%
+  
+                  # Retain variants meeting BA1 in either version
+                  filter(BA1_v4 %in% "Met" | BA1_v2 %in% "Met") %>%
+  
+                  # Distinguish variants not found from those not meeting BA1
+                  mutate(BA1_v4 = ifelse(is.na(Present_v4), "Not found", BA1_v4),
+                         BA1_v2 = ifelse(is.na(Present_v2), "Not found", BA1_v2),
+                         
+                         # Identify which version(s) meet BA1
+                         BA1_Version = case_when(BA1_v4 == "Met" & BA1_v2 == "Met" ~ "Both versions",
+                                                 BA1_v4 == "Met" ~ "gnomADv4.1",
+                                                 BA1_v2 == "Met" ~ "gnomADv2.1.1")) %>%
+                  mutate(ClinVar_v4 = coalesce(na_if(ClinVar_v4, "Not available"),
+                                               na_if(ClinVar_v2, "Not available"),
+                                               "Not available")) %>%
+                  filter(BA1_v2 != "Not found" & BA1_v4 != "Not found") %>%
+                  dplyr::select(Gene, ID_v4, Ref_v4, Alt_v4, ClinVar_v4, BA1_Version, BA1_Populations_v4, BA1_Populations_v2) %>%
+                  arrange(Gene, ID_v4) %>%
+                  mutate(BA1_Populations_v4 = ifelse(BA1_Populations_v4 == "", "Not applicable", BA1_Populations_v4),
+                         BA1_Populations_v2 = ifelse(BA1_Populations_v2 == "", "Not applicable", BA1_Populations_v2))
+```
+
+# Variants with altered PM2 fullfilment
+```{r pm2 table}
+DataPM2 <- Data %>% 
+           filter(Region == "Joint" & Version == "gnomADv4.1" & Quality == "Passed") %>%
+           rowwise() %>%
+           mutate(FAF95_MAX = max(c(FAF95_AFR, 
+                                    FAF95_AMR, 
+                                    FAF95_EAS, 
+                                    FAF95_NFE, 
+                                    FAF95_SAS), na.rm = TRUE)) %>%
+           mutate(FAF95_MAXETH = {Index <- which(c(FAF95_AFR, 
+                                                   FAF95_AMR, 
+                                                   FAF95_EAS, 
+                                                   FAF95_NFE, 
+                                                   FAF95_SAS) == max(c(FAF95_AFR, 
+                                                                       FAF95_AMR,
+                                                                       FAF95_EAS, 
+                                                                       FAF95_NFE, 
+                                                                       FAF95_SAS), na.rm = TRUE))
+         
+                                  if (length(Index) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index]} 
+           
+                                  # In cases of tied max FAF95, report FAF95 with greatest variant count
+                                  else {Index2 <- Index[which(c(Allele.Count_AFR,
+                                                                Allele.Count_AMR, 
+                                                                Allele.Count_EAS, 
+                                                                Allele.Count_NFE, 
+                                                                Allele.Count_SAS)[Index] == max(c(Allele.Count_AFR,
+                                                                                                  Allele.Count_AMR,
+                                                                                                  Allele.Count_EAS,
+                                                                                                  Allele.Count_NFE, 
+                                                                                                  Allele.Count_SAS)[Index], na.rm = TRUE))]
+                                  
+                                        if (length(Index2) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index2]} 
+                                  
+                                        # In cases of tied max FAF95 & allele count, report FAF95 with greatest number of alleles tested
+                                        else {Max <- max(c(Allele.Total_AFR,
+                                                           Allele.Total_AMR, 
+                                                           Allele.Total_EAS, 
+                                                           Allele.Total_NFE, 
+                                                           Allele.Total_SAS)[Index2], na.rm = TRUE)
+                                        
+                                              c("AFR",
+                                                "AMR",
+                                                "EAS",
+                                                "NFE", 
+                                                "SAS")[Index2[which.max(c(Allele.Total_AFR, 
+                                                                          Allele.Total_AMR, 
+                                                                          Allele.Total_EAS,
+                                                                          Allele.Total_NFE,
+                                                                          Allele.Total_SAS)[Index2])]]}}}) %>%
+           ungroup() %>% 
+           mutate(Count = case_when(FAF95_MAXETH == "AFR" ~ Allele.Count_AFR,
+                                    FAF95_MAXETH == "AMR" ~ Allele.Count_AMR,
+                                    FAF95_MAXETH == "EAS" ~ Allele.Count_EAS,
+                                    FAF95_MAXETH == "NFE" ~ Allele.Count_NFE,
+                                    FAF95_MAXETH == "SAS" ~ Allele.Count_SAS,
+                                    FAF95_MAXETH == "MID" ~ Allele.Count_MID,
+                                    TRUE ~ NA_integer_),
+                  Total = case_when(FAF95_MAXETH == "AFR" ~ Allele.Total_AFR,
+                                    FAF95_MAXETH == "AMR" ~ Allele.Total_AMR,
+                                    FAF95_MAXETH == "EAS" ~ Allele.Total_EAS,
+                                    FAF95_MAXETH == "NFE" ~ Allele.Total_NFE,
+                                    FAF95_MAXETH == "SAS" ~ Allele.Total_SAS,
+                                    FAF95_MAXETH == "MID" ~ Allele.Total_MID,
+                                    TRUE ~ NA_integer_)) %>% 
+           dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, Allele.Frequency_ALL, Homozygotes_ALL, FAF95_MAX, Count, Total, ClinVar, Stars, 
+                         FAF95_ALL, FAF95_AFR, FAF95_AMR, FAF95_EAS, FAF95_NFE, FAF95_SAS,
+                         Allele.Total_AFR, Allele.Count_AFR, Allele.Total_AMR, Allele.Count_AMR, Allele.Total_EAS, 
+                         Allele.Count_EAS, Allele.Total_NFE, Allele.Count_NFE, Allele.Total_SAS, Allele.Count_SAS) %>%
+           distinct() %>%
+           mutate(BA1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.005 (0.5%) where allele total >= 2000 & allele count >= 5
+                  BS1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.001 (0.1%) where allele total >= 2000 & allele count >= 5 [Excludes BA1 range]
+                  PM2_Supporting = ifelse(Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"),        # ALL AF < 0.0001 (0.01%)
+                  BS2 = ifelse(Homozygotes_ALL >= 2, "Satisfied", "Not satisfied"),                            # 2 >= Homozygotes
+                  BS2_Supporting = ifelse(Homozygotes_ALL == 1, "Satisfied", "Not satisfied"),                 # 1 == Homozygote
+                  Conflict_BS2_PM2 = ifelse(Homozygotes_ALL >= 2 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"), # Meets both criteria [evidence for benign & pathogenic]
+                  Conflict_BS1_PM2 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied")) %>% # Meets both criteria [evidence for benign & pathogenic]
+           mutate(ClinVar = ifelse(ClinVar == "Uncertain_significance", "Uncertain significance", 
+                            ifelse(ClinVar == "Pathogenic/Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                            ifelse(ClinVar == "Likely_benign", "Benign/Likely benign", 
+                            ifelse(ClinVar == "Benign/Likely_benign", "Benign/Likely benign", 
+                            ifelse(ClinVar == "other", "Uncertain significance", 
+                            ifelse(ClinVar == "Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                            ifelse(ClinVar == "Benign", "Benign/Likely benign",
+                            ifelse(ClinVar == "Pathogenic|other", "Uncertain significance", 
+                            ifelse(ClinVar == "Conflicting_classifications_of_pathogenicity", "Uncertain significance",
+                            ifelse(ClinVar == "Pathogenic", "Pathogenic/Likely pathogenic", NA)))))))))))  %>%
+           mutate(ID = paste0("Chr",Chromosome,":", Start,"-", End)) %>%
+           dplyr::select(Chromosome, Gene, ID, Ref, Alt, ClinVar, PM2_Supporting) %>% 
+           arrange(Chromosome, Gene) %>%
+    mutate(ClinVar = ifelse(is.na(ClinVar), "Not available", ClinVar),
+           across(everything(), ~ifelse(.x == "Satisfied", "Met", .x)),
+           across(everything(), ~ifelse(.x == "Not satisfied", "Not met", .x))) %>%
+           dplyr::select(-Chromosome) %>%
+           mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")"))
+
+DataPM22 <- Data %>% 
+            filter(Version == "gnomADv2.1.1" & Region != "Joint" & Quality == "Passed") %>%
+            rowwise() %>%
+            mutate(FAF95_MAX = max(c(FAF95_AFR, 
+                                     FAF95_AMR, 
+                                     FAF95_EAS, 
+                                     FAF95_NFE, 
+                                     FAF95_SAS), na.rm = TRUE)) %>%
+            mutate(FAF95_MAXETH = {Index <- which(c(FAF95_AFR, 
+                                                    FAF95_AMR, 
+                                                    FAF95_EAS, 
+                                                    FAF95_NFE, 
+                                                    FAF95_SAS) == max(c(FAF95_AFR, 
+                                                                        FAF95_AMR,
+                                                                        FAF95_EAS, 
+                                                                        FAF95_NFE, 
+                                                                        FAF95_SAS), na.rm = TRUE))
+         
+                                   if (length(Index) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index]} 
+         
+                                   # In cases of tied max FAF95, report FAF95 with greatest variant count
+                                   else {Index2 <- Index[which(c(Allele.Count_AFR,
+                                                                 Allele.Count_AMR, 
+                                                                 Allele.Count_EAS, 
+                                                                 Allele.Count_NFE, 
+                                                                 Allele.Count_SAS)[Index] == max(c(Allele.Count_AFR,
+                                                                                                   Allele.Count_AMR,
+                                                                                                   Allele.Count_EAS,
+                                                                                                   Allele.Count_NFE, 
+                                                                                                   Allele.Count_SAS)[Index], na.rm = TRUE))]
+                                
+                                          if (length(Index2) == 1) {c("AFR", "AMR", "EAS", "NFE", "SAS")[Index2]} 
+                                
+                                          # In cases of tied max FAF95 & allele count, report FAF95 with greatest number of alleles tested
+                                         else {Max <- max(c(Allele.Total_AFR,
+                                                            Allele.Total_AMR, 
+                                                            Allele.Total_EAS, 
+                                                            Allele.Total_NFE, 
+                                                            Allele.Total_SAS)[Index2], na.rm = TRUE)
+                                      
+                                               c("AFR",
+                                                 "AMR",
+                                                 "EAS",
+                                                 "NFE", 
+                                                 "SAS")[Index2[which.max(c(Allele.Total_AFR, 
+                                                                           Allele.Total_AMR, 
+                                                                           Allele.Total_EAS,
+                                                                           Allele.Total_NFE,
+                                                                           Allele.Total_SAS)[Index2])]]}}}) %>%
+            ungroup() %>%
+            mutate(Count = case_when(FAF95_MAXETH == "AFR" ~ Allele.Count_AFR,
+                                     FAF95_MAXETH == "AMR" ~ Allele.Count_AMR,
+                                     FAF95_MAXETH == "EAS" ~ Allele.Count_EAS,
+                                     FAF95_MAXETH == "NFE" ~ Allele.Count_NFE,
+                                     FAF95_MAXETH == "SAS" ~ Allele.Count_SAS,
+                                     TRUE ~ NA_integer_),
+                   Total = case_when(FAF95_MAXETH == "AFR" ~ Allele.Total_AFR,
+                                     FAF95_MAXETH == "AMR" ~ Allele.Total_AMR,
+                                     FAF95_MAXETH == "EAS" ~ Allele.Total_EAS,
+                                     FAF95_MAXETH == "NFE" ~ Allele.Total_NFE,
+                                     FAF95_MAXETH == "SAS" ~ Allele.Total_SAS,
+                                     TRUE ~ NA_integer_)) %>%
+            group_by(Chromosome, Gene, Start, Ref, Alt) %>%
+            mutate(Allele.Frequency_ALL = max(Allele.Frequency_ALL, na.rm = TRUE),
+                   Homozygotes_ALL = max(Homozygotes_ALL, na.rm = TRUE),
+                   FAF95_MAX = max(FAF95_MAX, na.rm = TRUE)) %>%
+            slice_max(order_by = FAF95_MAX, with_ties = FALSE) %>% 
+            ungroup() %>%
+            dplyr::select(Chromosome, Gene, Start, End, Ref, Alt, Allele.Frequency_ALL, Homozygotes_ALL, FAF95_MAX, Count, Total, ClinVar, Stars, 
+                          FAF95_ALL, FAF95_AFR, FAF95_AMR, FAF95_EAS, FAF95_NFE, FAF95_SAS,
+                          Allele.Total_AFR, Allele.Count_AFR, Allele.Total_AMR, Allele.Count_AMR, Allele.Total_EAS, 
+                          Allele.Count_EAS, Allele.Total_NFE, Allele.Count_NFE, Allele.Total_SAS, Allele.Count_SAS) %>%
+            distinct() %>%
+            mutate(BA1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.005 (0.5%) where allele total >= 2000 & allele count >= 5
+                   BS1 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005, "Satisfied", "Not satisfied"), # 95% MAX FAF >= 0.001 (0.1%) where allele total >= 2000 & allele count >= 5 [Exlcudes BA1 range]
+                   PM2_Supporting = ifelse(Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"),        # ALL AF < 0.0001 (0.01%)
+                   BS2 = ifelse(Homozygotes_ALL >= 2, "Satisfied", "Not satisfied"),                            # 2 >= Homozygotes
+                   BS2_Supporting = ifelse(Homozygotes_ALL == 1, "Satisfied", "Not satisfied"),                 # 1 == Homozygote
+                   Conflict_BS2_PM2 = ifelse(Homozygotes_ALL >= 2 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied"), # Meets both criteria [evidence for benign & pathogenic]
+                   Conflict_BS1_PM2 = ifelse(Total >= 2000 & Count >= 5 & FAF95_MAX >= 0.001 & FAF95_MAX < 0.005 & Allele.Frequency_ALL < 0.0001, "Satisfied", "Not satisfied")) %>%  # Meets both criteria [evidence for benign & pathogenic]
+            mutate(ClinVar = ifelse(ClinVar == "Uncertain_significance", "Uncertain significance", 
+                             ifelse(ClinVar == "Pathogenic/Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                             ifelse(ClinVar == "Likely_benign", "Benign/Likely benign", 
+                             ifelse(ClinVar == "Benign/Likely_benign", "Benign/Likely benign", 
+                             ifelse(ClinVar == "other", "Uncertain significance", 
+                             ifelse(ClinVar == "Likely_pathogenic", "Pathogenic/Likely pathogenic", 
+                             ifelse(ClinVar == "Benign", "Benign/Likely benign",
+                             ifelse(ClinVar == "Pathogenic|other", "Uncertain significance", 
+                             ifelse(ClinVar == "Conflicting_classifications_of_pathogenicity", "Uncertain significance",
+                             ifelse(ClinVar == "Pathogenic", "Pathogenic/Likely pathogenic", NA))))))))))) %>%
+            mutate(ID = paste0("Chr",Chromosome,":", Start,"-", End)) %>%
+            mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")")) %>%
+            dplyr::select(Chromosome, Gene, ID, Ref, Alt, ClinVar, PM2_Supporting) %>% 
+            arrange(Chromosome, Gene) %>%
+     mutate(ClinVar = ifelse(is.na(ClinVar), "Not available", ClinVar),
+            across(everything(), ~ifelse(.x == "Satisfied", "Met", .x)),
+            across(everything(), ~ifelse(.x == "Not satisfied", "Not met", .x))) %>%
+            dplyr::select(-Chromosome) %>%
+            mutate(ID2 = paste0(ID, "(",Ref, ">", Alt, ")"))
+
+PM2_Comparison <- full_join(DataPM2 %>%
+                            mutate(Present_v4 = TRUE) %>%
+                            dplyr::select(Gene, ID, ID2, Ref, Alt, ClinVar, PM2_Supporting, Present_v4),
+                            DataPM22 %>%
+                            mutate(Present_v2 = TRUE) %>%
+                            dplyr::select(Gene, ID, ID2, Ref, Alt, ClinVar, PM2_Supporting, Present_v2),
+                            by = c("Gene", "ID2"), suffix = c("_v4", "_v2")) %>%
+  
+                  # Retain variants meeting BA1 in either version
+                  filter(PM2_Supporting_v4 %in% "Met" | PM2_Supporting_v2 %in% "Met") %>%
+  
+                  # Distinguish variants not found from those not meeting BA1
+                  mutate(PM2_Supporting_v4 = ifelse(is.na(Present_v4), "Not found", PM2_Supporting_v4),
+                         PM2_Supporting_v2 = ifelse(is.na(Present_v2), "Not found", PM2_Supporting_v2),
+                         
+                         # Identify which version(s) meet BA1
+                         PM2_Version = case_when(PM2_Supporting_v4 == "Met" & PM2_Supporting_v2 == "Met" ~ "Both versions",
+                                                 PM2_Supporting_v4 == "Met" ~ "gnomADv4.1",
+                                                 PM2_Supporting_v2 == "Met" ~ "gnomADv2.1.1")) %>%
+                  mutate(ClinVar_v4 = coalesce(na_if(ClinVar_v4, "Not available"),
+                                               na_if(ClinVar_v2, "Not available"),
+                                               "Not available")) %>%
+                  filter(PM2_Supporting_v2 != "Not found" & PM2_Supporting_v4 != "Not found") %>%
+                  dplyr::select(Gene, ID_v4, Ref_v4, Alt_v4, ClinVar_v4, PM2_Version) %>%
+                  arrange(Gene, ID_v4) %>%
+                  filter(PM2_Version != "Both versions")
+```
