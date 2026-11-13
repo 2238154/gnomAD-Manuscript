@@ -661,7 +661,7 @@ Fig2A <- ggplot(Fig2a,
          scale_y_log10(limits = c(3,
                                   max(1500, max(Fig2a$Total) * 1.6)),
                        breaks = c(10, 100, 1000),
-                       labels = scales::label_comma()) +
+                       labels = scales::label_number(big.mark = "")) +
          labs(x = NULL,
               y = "Number of variants") +
          theme_minimal(base_family = "Arial",
@@ -1311,7 +1311,7 @@ Fig4a_labels <- Fig4a %>%
                 dplyr::mutate(N_release = if_else(as.character(Version) == "gnomADv2.1.1",
                                                   2185L, 5021L),
                               TotalLabel = paste0("Total:\n",
-                                                  scales::comma(Total),
+                                                  scales::number(Total, big.mark = ""),
                                                   " (", pct_label4(Total, N_release), ")"),
                               CountY = pmax(Total + 150, 310),
                               TotalY = CountY + 610)
@@ -1324,7 +1324,7 @@ Fig4A <- ggplot2::ggplot() +
          geom_text(data = Fig4a_labels,
                    aes(x = X - 0.10,
                        y = CountY,
-                       label = scales::comma(Common)),
+                       label = scales::number(Common, big.mark = "")),
                    family = "Arial",
                    fontface = "bold",
                    size = 2.8,
@@ -1333,7 +1333,7 @@ Fig4A <- ggplot2::ggplot() +
          geom_text(data = Fig4a_labels,
                    aes(x = X + 0.10,
                        y = CountY,
-                       label = scales::comma(Unique)),
+                       label = scales::number(Unique, big.mark = "")),
                    family = "Arial",
                    fontface = "bold",
                    size = 2.8,
@@ -1361,7 +1361,7 @@ Fig4A <- ggplot2::ggplot() +
                                       expand = ggplot2::expansion(mult = 0)) +
           scale_y_continuous(limits = c(0, 5900),
                              breaks = seq(0, 5000, 1000),
-                             labels = scales::label_comma(),
+                             labels = scales::label_number(big.mark = ""),
                              expand = expansion(mult = 0)) +
           ggplot2::labs(x = "ACMG/AMP population criteria", y = "Number of variants") +
           ggplot2::theme_minimal(base_family = "Arial", base_size = 12) +
@@ -1709,7 +1709,7 @@ Fig5c <- Data1 %>%
                 Percent = ifelse(Percent == 0, round(Count / Total * 100, 2), Percent),
                 Category = factor(Category, level = c("PM2_Supporting")),
                 ClinVar = factor(ClinVar, level = c("Benign/Likely benign", "Uncertain significance", "Pathogenic/Likely pathogenic")),
-                Stars = factor(Stars, levels = c(0, 1, 2, 3, 4), labels = c("None", "*", "**", "***", "****"))) %>%
+                Stars = factor(Stars, levels = c(0, 1, 2, 3, 4), labels = c("0 stars", "1 star", "2 stars", "3 stars", "4 stars"))) %>%
          distinct()
 
 Fig5c
@@ -1720,9 +1720,9 @@ Fig5C <- Fig5c %>%
                   width = 0.9) +
          scale_x_discrete(expand = c(0, 0)) +
          scale_y_continuous(expand = expansion(mult = c(0, 0.6))) +
-         scale_fill_manual(values = alpha(c("None" = "#35B779",
-                                            "*" = "#2A788E", 
-                                            "**" = "#440154"), 0.7)) +
+         scale_fill_manual(values = alpha(c("0 stars" = "#35B779",
+                                            "1 star" = "#2A788E", 
+                                            "2 stars" = "#440154"), 0.7)) +
          geom_text(aes(label = ifelse(Percent == 0, paste0(Count, "\n(0%)"), paste0(Count, "\n(", sprintf("%.1f", Percent), "%)")), group = Stars), 
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
                    vjust = -0.5,
@@ -1805,6 +1805,9 @@ Fig6 <- read_xlsx("gnomad_gene_constraint_scores.xlsx") %>%
 
 Fig6
 
+score_label6 <- function(x) {ifelse(x == 0, "0",
+                                    scales::number(x, accuracy = 0.01, big.mark = "", style_negative = "minus"))}
+
 Fig6A <- Fig6 %>%
          filter(Type == "Synonymous z-score") %>%
          ggplot(aes(x = Gene, y = Score, fill = Version)) +
@@ -1812,10 +1815,11 @@ Fig6A <- Fig6 %>%
          scale_x_discrete(expand = c(0, 0)) +
          scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
                                             "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+         geom_text(aes(label = score_label6(Score),
+                       group = Version,
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)),
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
+                   size = 3.5,
                    family = "Arial") +
          guides(fill = guide_legend(nrow = 1,
                                     title.position = "top",
@@ -1843,7 +1847,8 @@ Fig6A <- Fig6 %>%
                panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
                panel.spacing = unit(4, "lines"),
                strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
+               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + scale_y_continuous(limits = c(-4, 2.3),
+                                                                                                         labels = scales::label_number(big.mark = "", style_negative = "minus"))
 
 Fig6A
 
@@ -1854,10 +1859,11 @@ Fig6B <- Fig6 %>%
          scale_x_discrete(expand = c(0, 0)) +
          scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
                                             "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+         geom_text(aes(label = score_label6(Score),
+                       group = Version,
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)),
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
+                   size = 3.5,
                    family = "Arial") +
          guides(fill = guide_legend(nrow = 1,
                                     title.position = "top",
@@ -1885,7 +1891,8 @@ Fig6B <- Fig6 %>%
                panel.grid.minor = element_line(linetype = "dotted", color = "grey90"),
                panel.spacing = unit(4, "lines"),
                strip.placement = "inside",
-               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + ylim(-4, 2.3)
+               strip.background = element_rect(fill = "#F6F6F5", colour = "white")) + scale_y_continuous(limits = c(-4, 2.3),
+                                                                                                         labels = scales::label_number(big.mark = "", style_negative = "minus"))
 
 Fig6B
 
@@ -1896,10 +1903,11 @@ Fig6C <- Fig6 %>%
          scale_x_discrete(expand = c(0, 0)) +
          scale_fill_manual(values = alpha(c("gnomADv4.1" = "#35B779",
                                             "gnomADv2.1.1" = "#440154"), 0.7)) +
-         geom_text(aes(label = ifelse(Score == 0, paste0("0"), paste0(sprintf("%.2f", Score))), group = Version, 
-                       vjust = ifelse(Score >= 0, -0.5, 1.2)), 
+         geom_text(aes(label = score_label6(Score),
+                       group = Version,
+                       vjust = ifelse(Score >= 0, -0.5, 1.2)),
                    position = position_dodge2(width = 0.9, padding = 0.1, preserve = "single"),
-                   size = 3.5, 
+                   size = 3.5,
                    family = "Arial") +
          guides(fill = guide_legend(nrow = 1,
                                     title.position = "top",
